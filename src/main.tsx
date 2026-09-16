@@ -9,13 +9,13 @@ declare global { interface Window { ethereum?: any } }
 const chains = [
   { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/' }, { id: 10, name: 'OP Mainnet', native: 'ETH', explorer: 'https://optimistic.etherscan.io/tx/' },
   { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/' }, { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosisscan.io/tx/' },
-  { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/' }, { id: 143, name: 'Monad', native: 'MON', explorer: 'https://monadscan.com/tx/' },
+  { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/' }, { id: 143, name: 'Monad', native: 'MON', explorer: 'mon' },
   { id: 130, name: 'Unichain', native: 'ETH', explorer: 'https://uniscan.xyz/tx/' }, { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'https://soneium.blockscout.com/tx/' },
   { id: 42161, name: 'Arbitrum One', native: 'ETH', explorer: 'https://arbiscan.io/tx/' }, { id: 43114, name: 'Avalanche C-Chain', native: 'AVAX', explorer: 'https://snowtrace.io/tx/' },
   { id: 8453, name: 'Base', native: 'ETH', explorer: 'https://basescan.org/tx/' }, { id: 999, name: 'HyperEVM', native: 'HYPE', explorer: 'https://hyperevmscan.io/tx/' },
 ];
 type WalletApp = 'metamask' | 'trust' | 'coinbase';
-let walletConnectProvider: EthereumProvider | null = null;
+let walletConnectProvider: any = null;
 
 const walletName = (app: WalletApp) => app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet';
 const isMobileBrowser = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -48,7 +48,7 @@ function App() {
     setBusy(true); setStatus('Preparing WalletConnect…');
     try {
       if (!walletConnectProvider) {
-        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id), methods: ['eth_sendTransaction', 'eth_sign', 'personal_sign'], events: ['accountsChanged', 'chainChanged', 'disconnect'], showQrModal: true, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
+        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], methods: ['eth_sendTransaction', 'eth_sign', 'personal_sign'], events: ['accountsChanged', 'chainChanged', 'disconnect'], showQrModal: true, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
         walletConnectProvider.on('accountsChanged', (a: string[]) => setAddress(a[0] ?? ''));
         walletConnectProvider.on('chainChanged', (c: string | number) => setConnectedChain(Number(c)));
         walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setStatus('Wallet disconnected.'); });
