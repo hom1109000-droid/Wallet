@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import { BrowserProvider, formatUnits, isAddress, parseEther } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import './styles.css';
