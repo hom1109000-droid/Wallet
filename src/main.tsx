@@ -10,8 +10,17 @@ declare global {
 
 const chains = [
   { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/' },
+  { id: 10, name: 'OP Mainnet', native: 'ETH', explorer: 'https://optimistic.etherscan.io/tx/' },
   { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/' },
+  { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosisscan.io/tx/' },
   { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/' },
+  { id: 143, name: 'Monad', native: 'MON', explorer: 'https://monadscan.com/tx/' },
+  { id: 130, name: 'Unichain', native: 'ETH', explorer: 'https://uniscan.xyz/tx/' },
+  { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'https://soneium.blockscout.com/tx/' },
+  { id: 42161, name: 'Arbitrum One', native: 'ETH', explorer: 'https://arbiscan.io/tx/' },
+  { id: 43114, name: 'Avalanche C-Chain', native: 'AVAX', explorer: 'https://snowtrace.io/tx/' },
+  { id: 8453, name: 'Base', native: 'ETH', explorer: 'https://basescan.org/tx/' },
+  { id: 999, name: 'HyperEVM', native: 'HYPE', explorer: 'https://hyperevmscan.io/tx/' },
 ];
 
 let walletConnectProvider: EthereumProvider | null = null;
@@ -64,7 +73,7 @@ function App() {
       if (!walletConnectProvider) {
         walletConnectProvider = await EthereumProvider.init({
           projectId,
-          optionalChains: [1, 56, 137],
+          optionalChains: chains.map(c => c.id),
           methods: ['eth_sendTransaction', 'eth_sign', 'personal_sign'],
           events: ['accountsChanged', 'chainChanged', 'disconnect'],
           showQrModal: true,
