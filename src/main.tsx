@@ -29,6 +29,19 @@ function getProjectId() {
   return (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
 }
 
+function openWalletApp(app: 'metamask' | 'trust' | 'coinbase') {
+  const dappUrl = encodeURIComponent(window.location.href);
+  const links = {
+    metamask: `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`,
+    trust: `https://link.trustwallet.com/open_url?url=${dappUrl}`,
+    coinbase: `https://go.cb-w.com/dapp?cb_url=${dappUrl}`,
+  };
+
+  // Mobile browsers cannot guarantee that another app is installed or will open.
+  // These official universal/deep links ask the OS to hand the current dapp to the wallet.
+  window.location.href = links[app];
+}
+
 function App() {
   const [address, setAddress] = useState('');
   const [destination, setDestination] = useState('');
@@ -50,7 +63,7 @@ function App() {
 
   async function connectBrowserWallet() {
     if (!window.ethereum) {
-      setStatus('No injected wallet detected. On mobile, use Connect Mobile Wallet.');
+      setStatus('No injected wallet detected. On mobile, use a mobile-wallet button below.');
       return;
     }
     try {
@@ -167,7 +180,7 @@ function App() {
       <div className="brand">EVM Recovery</div>
       <div className="wallet-actions">
         <button onClick={connectBrowserWallet} disabled={busy}>{address ? address.slice(0, 6) + '…' + address.slice(-4) : 'Browser Wallet'}</button>
-        <button onClick={connectMobileWallet} disabled={busy}>Mobile Wallet</button>
+        <button onClick={connectMobileWallet} disabled={busy}>WalletConnect</button>
       </div>
     </header>
 
@@ -175,6 +188,17 @@ function App() {
       <p className="eyebrow">NON-CUSTODIAL RECOVERY</p>
       <h1>Review first. Sign explicitly.</h1>
       <p>Connect a wallet, choose a destination and amount, review the exact native-asset transfer, then approve it in your wallet.</p>
+    </section>
+
+    <section className="card mobile-wallets">
+      <h2>Open a mobile wallet</h2>
+      <p className="muted">On a phone, these buttons hand the current page to the selected wallet app when its official mobile link is supported. The wallet still controls every connection and transaction approval.</p>
+      <div className="wallet-buttons">
+        <button onClick={() => openWalletApp('metamask')}>Open MetaMask</button>
+        <button onClick={() => openWalletApp('trust')}>Open Trust Wallet</button>
+        <button onClick={() => openWalletApp('coinbase')}>Open Coinbase Wallet</button>
+      </div>
+      <button className="primary" onClick={connectMobileWallet} disabled={busy}>Connect with WalletConnect</button>
     </section>
 
     <section className="card">
