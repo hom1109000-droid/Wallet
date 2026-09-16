@@ -1,53 +1,206 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserProvider, isAddress } from 'ethers';
+import { BrowserProvider, isAddress, parseEther } from 'ethers';
+import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import './styles.css';
 
-declare global { interface Window { ethereum?: any } }
+declare global {
+  interface Window { ethereum?: any }
+}
 
 const chains = [
-  { id: 1, name: 'Ethereum', native: 'ETH' },
-  { id: 56, name: 'BNB Smart Chain', native: 'BNB' },
-  { id: 137, name: 'Polygon', native: 'POL' },
+  { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/' },
+  { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/' },
+  { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/' },
 ];
+
+let walletConnectProvider: EthereumProvider | null = null;
+
+function getProjectId() {
+  return (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
+}
 
 function App() {
   const [address, setAddress] = useState('');
   const [destination, setDestination] = useState('');
+  const [amount, setAmount] = useState('');
   const [connectedChain, setConnectedChain] = useState<number | null>(null);
   const [status, setStatus] = useState('Connect your wallet to begin.');
   const [preview, setPreview] = useState(false);
+  const [txHash, setTxHash] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  async function connect() {
-    if (!window.ethereum) { setStatus('No EVM wallet detected. Install or enable a wallet extension.'); return; }
+  async function finishConnection(eip1193: any) {
+    const provider = new BrowserProvider(eip1193);
+    const accounts = await provider.send('eth_requestAccounts', []);
+    const network = await provider.getNetwork();
+    setAddress(accounts[0] ?? '');
+    setConnectedChain(Number(network.chainId));
+    setStatus('Wallet connected.');
+  }
+
+  async function connectBrowserWallet() {
+    if (!window.ethereum) {
+      setStatus('No injected wallet detected. On mobile, use Connect Mobile Wallet.');
+      return;
+    }
     try {
-      const provider = new BrowserProvider(window.ethereum);
-      const accounts = await provider.send('eth_requestAccounts', []);
-      const network = await provider.getNetwork();
-      setAddress(accounts[0] ?? '');
-      setConnectedChain(Number(network.chainId));
-      setStatus('Wallet connected.');
-    } catch (e) { setStatus(e instanceof Error ? e.message : 'Connection cancelled.'); }
+      await finishConnection(window.ethereum);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Connection cancelled.');
+    }
+  }
+
+  async function connectMobileWallet() {
+    const projectId = getProjectId();
+    if (!projectId) {
+      setStatus('Mobile connection is not configured yet. Add VITE_WALLETCONNECT_PROJECT_ID in Cloudflare Pages environment variables.');
+      return;
+    }
+
+    setBusy(true);
+    setStatus('Opening the mobile wallet connection…');
+    try {
+      if (!walletConnectProvider) {
+        walletConnectProvider = await EthereumProvider.init({
+          projectId,
+          optionalChains: [1, 56, 137],
+          methods: ['eth_sendTransaction', 'eth_sign', 'personal_sign'],
+          events: ['accountsChanged', 'chainChanged', 'disconnect'],
+          showQrModal: true,
+          metadata: {
+            name: 'EVM Wallet Recovery',
+            description: 'Non-custodial EVM recovery interface',
+            url: window.location.origin,
+            icons: [`${window.location.origin}/favicon.svg`],
+          },
+        });
+      }
+
+      walletConnectProvider.on('accountsChanged', (accounts: string[]) => {
+        setAddress(accounts[0] ?? '');
+      });
+      walletConnectProvider.on('chainChanged', (chainId: string | number) => {
+        setConnectedChain(Number(chainId));
+      });
+
+      await walletConnectProvider.enable();
+      await finishConnection(walletConnectProvider);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Mobile wallet connection cancelled.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function makePreview() {
     if (!address) { setStatus('Connect a wallet first.'); return; }
     if (!isAddress(destination)) { setStatus('Enter a valid EVM destination address.'); return; }
     if (destination.toLowerCase() === address.toLowerCase()) { setStatus('Destination must differ from the connected wallet.'); return; }
-    setPreview(true); setStatus('Recovery preview created. No transaction has been sent.');
+    try {
+      const value = parseEther(amount || '0');
+      if (value <= 0n) throw new Error('Enter an amount greater than zero.');
+    } catch {
+      setStatus('Enter a valid native-coin amount.');
+      return;
+    }
+    setPreview(true);
+    setTxHash('');
+    setStatus('Review the transaction details, then explicitly authorize it in your wallet.');
   }
 
+  async function sendNativeTransaction() {
+    if (!address || !isAddress(destination)) {
+      setStatus('Connect a wallet and enter a valid destination first.');
+      return;
+    }
+
+    let value;
+    try {
+      value = parseEther(amount);
+      if (value <= 0n) throw new Error();
+    } catch {
+      setStatus('Enter a valid native-coin amount.');
+      return;
+    }
+
+    setBusy(true);
+    setTxHash('');
+    setStatus('Preparing transaction. Your wallet will ask you to confirm it.');
+
+    try {
+      const eip1193 = walletConnectProvider ?? window.ethereum;
+      if (!eip1193) throw new Error('No connected wallet provider is available.');
+
+      const provider = new BrowserProvider(eip1193);
+      const signer = await provider.getSigner();
+      const sender = await signer.getAddress();
+      if (sender.toLowerCase() !== address.toLowerCase()) {
+        throw new Error('Connected account changed. Reconnect the wallet.');
+      }
+
+      const tx = await signer.sendTransaction({ to: destination, value });
+      setTxHash(tx.hash);
+      setStatus('Transaction submitted. Waiting for confirmation…');
+      await tx.wait();
+      setStatus('Transaction confirmed.');
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Transaction was cancelled or failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const chainInfo = chains.find((c) => c.id === connectedChain);
+
   return <main className="shell">
-    <header><div className="brand">EVM Recovery</div><button onClick={connect}>{address ? address.slice(0,6)+'…'+address.slice(-4) : 'Connect Wallet'}</button></header>
-    <section className="hero"><p className="eyebrow">NON-CUSTODIAL RECOVERY</p><h1>Securely review assets from a wallet you control.</h1><p>Connect your EVM wallet, choose a destination, and review the recovery plan before any transaction is authorized.</p></section>
+    <header>
+      <div className="brand">EVM Recovery</div>
+      <div className="wallet-actions">
+        <button onClick={connectBrowserWallet} disabled={busy}>{address ? address.slice(0, 6) + '…' + address.slice(-4) : 'Browser Wallet'}</button>
+        <button onClick={connectMobileWallet} disabled={busy}>Mobile Wallet</button>
+      </div>
+    </header>
+
+    <section className="hero">
+      <p className="eyebrow">NON-CUSTODIAL RECOVERY</p>
+      <h1>Review first. Sign explicitly.</h1>
+      <p>Connect a wallet, choose a destination and amount, review the exact native-asset transfer, then approve it in your wallet.</p>
+    </section>
+
     <section className="card">
-      <label>Destination address</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false)}} placeholder="0x…" spellCheck={false}/>
-      <button className="primary" onClick={makePreview}>Create recovery preview</button>
+      <label>Destination address</label>
+      <input value={destination} onChange={e => { setDestination(e.target.value); setPreview(false); setTxHash(''); }} placeholder="0x…" spellCheck={false} />
+
+      <label className="amount-label">Amount ({chainInfo?.native ?? 'native asset'})</label>
+      <input value={amount} onChange={e => { setAmount(e.target.value); setPreview(false); setTxHash(''); }} placeholder="0.00" inputMode="decimal" />
+
+      <button className="primary" onClick={makePreview} disabled={busy}>Create transaction preview</button>
       <div className="status">{status}</div>
     </section>
-    <section className="card"><h2>Supported networks</h2><div className="chains">{chains.map(c=><div className="chain" key={c.id}><strong>{c.name}</strong><span>{c.native} · chain {c.id}</span></div>)}</div></section>
-    {preview && <section className="card preview"><h2>Recovery preview</h2><p><b>Source:</b> {address}</p><p><b>Destination:</b> {destination}</p><p><b>Connected chain:</b> {connectedChain ?? 'unknown'}</p><div className="notice">This version intentionally does not execute arbitrary transfers. It is a review layer for a future audited recovery flow.</div></section>}
-    <footer>Never enter a seed phrase or private key. Verify the destination on your wallet screen before authorizing anything.</footer>
+
+    <section className="card">
+      <h2>Connected wallet</h2>
+      <p className="address">{address || 'Not connected'}</p>
+      <p>Chain: {chainInfo ? `${chainInfo.name} (${connectedChain})` : 'Not detected'}</p>
+    </section>
+
+    <section className="card">
+      <h2>Supported networks</h2>
+      <div className="chains">{chains.map(c => <div className="chain" key={c.id}><strong>{c.name}</strong><span>{c.native} · chain {c.id}</span></div>)}</div>
+    </section>
+
+    {preview && <section className="card preview">
+      <h2>Transaction preview</h2>
+      <p><b>From:</b> {address}</p>
+      <p><b>To:</b> {destination}</p>
+      <p><b>Amount:</b> {amount} {chainInfo?.native ?? 'native asset'}</p>
+      <div className="notice">Nothing has been authorized yet. Press the button below to send this exact transaction to your connected wallet for explicit confirmation.</div>
+      <button className="primary confirm" onClick={sendNativeTransaction} disabled={busy}>{busy ? 'Waiting for wallet…' : 'Confirm in wallet'}</button>
+      {txHash && <p className="tx-result"><b>Transaction:</b> {chainInfo ? <a href={chainInfo.explorer + txHash} target="_blank" rel="noreferrer">{txHash}</a> : txHash}</p>}
+    </section>}
+
+    <footer>Never enter a seed phrase or private key. The app cannot sign without the connected wallet explicitly approving the transaction. Verify the destination and amount on the wallet confirmation screen before approving.</footer>
   </main>
 }
 
