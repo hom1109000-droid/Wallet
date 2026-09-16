@@ -1,21 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserProvider, isAddress, parseEther } from 'ethers';
+import { BrowserProvider, formatUnits, isAddress, parseEther } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import './styles.css';
 
 declare global { interface Window { ethereum?: any } }
 
 const chains = [
-  { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/' }, { id: 10, name: 'OP Mainnet', native: 'ETH', explorer: 'https://optimistic.etherscan.io/tx/' },
-  { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/' }, { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosisscan.io/tx/' },
-  { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/' }, { id: 143, name: 'Monad', native: 'MON', explorer: 'https://monadscan.com/tx/' },
-  { id: 130, name: 'Unichain', native: 'ETH', explorer: 'https://uniscan.xyz/tx/' }, { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'https://soneium.blockscout.com/tx/' },
-  { id: 42161, name: 'Arbitrum One', native: 'ETH', explorer: 'https://arbiscan.io/tx/' }, { id: 43114, name: 'Avalanche C-Chain', native: 'AVAX', explorer: 'https://snowtrace.io/tx/' },
-  { id: 8453, name: 'Base', native: 'ETH', explorer: 'https://basescan.org/tx/' }, { id: 999, name: 'HyperEVM', native: 'HYPE', explorer: 'https://hyperevmscan.io/tx/' },
+  { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/', tokenApi: 'https://eth.blockscout.com/api/v2' }, { id: 10, name: 'OP Mainnet', native: 'ETH', explorer: 'https://optimistic.etherscan.io/tx/', tokenApi: 'https://optimism.blockscout.com/api/v2' },
+  { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/' }, { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosis.blockscout.com/tx/', tokenApi: 'https://gnosis.blockscout.com/api/v2' },
+  { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/', tokenApi: 'https://polygon.blockscout.com/api/v2' }, { id: 143, name: 'Monad', native: 'MON', explorer: 'https://monadscan.com/tx/' },
+  { id: 130, name: 'Unichain', native: 'ETH', explorer: 'https://uniscan.xyz/tx/', tokenApi: 'https://unichain.blockscout.com/api/v2' }, { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'https://soneium.blockscout.com/tx/', tokenApi: 'https://soneium.blockscout.com/api/v2' },
+  { id: 42161, name: 'Arbitrum One', native: 'ETH', explorer: 'https://arbiscan.io/tx/', tokenApi: 'https://arbitrum.blockscout.com/api/v2' }, { id: 43114, name: 'Avalanche C-Chain', native: 'AVAX', explorer: 'https://snowtrace.io/tx/', tokenApi: 'https://avalanche.blockscout.com/api/v2' },
+  { id: 8453, name: 'Base', native: 'ETH', explorer: 'https://basescan.org/tx/', tokenApi: 'https://base.blockscout.com/api/v2' }, { id: 999, name: 'HyperEVM', native: 'HYPE', explorer: 'https://hyperevmscan.io/tx/' },
 ];
 type WalletApp = 'metamask' | 'trust' | 'coinbase';
 type WalletConnectProvider = Awaited<ReturnType<typeof EthereumProvider.init>>;
+type TokenAsset = { chainId: number; chainName: string; address: string; name: string; symbol: string; decimals: number; balance: string };
 let walletConnectProvider: WalletConnectProvider | null = null;
 
 const walletName = (app: WalletApp) => app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet';
@@ -26,20 +27,50 @@ function walletLink(app: WalletApp) {
   return { metamask: `https://metamask.app.link/dapp/${path}`, trust: `https://link.trustwallet.com/open_url?url=${url}`, coinbase: `https://go.cb-w.com/dapp?cb_url=${url}` }[app];
 }
 
+async function discoverTokens(chain: typeof chains[number], address: string): Promise<TokenAsset[]> {
+  if (!chain.tokenApi) return [];
+  const response = await fetch(`${chain.tokenApi}/addresses/${address}/token-balances?type=ERC-20&limit=1000`);
+  if (!response.ok) throw new Error(`${chain.name} token indexer returned ${response.status}`);
+  const data = await response.json() as any[];
+  return data.filter(item => item?.token?.address && item?.value && item.value !== '0').map(item => {
+    const token = item.token;
+    const decimals = Number(token.decimals ?? 18);
+    let balance = item.value as string;
+    try { balance = formatUnits(item.value, decimals); } catch { /* keep raw value */ }
+    return { chainId: chain.id, chainName: chain.name, address: token.address, name: token.name || 'Unknown token', symbol: token.symbol || 'TOKEN', decimals, balance };
+  });
+}
+
 function App() {
   const [address, setAddress] = useState(''); const [destination, setDestination] = useState(''); const [amount, setAmount] = useState('');
   const [connectedChain, setConnectedChain] = useState<number | null>(null); const [selectedChain, setSelectedChain] = useState<number | null>(null);
   const [status, setStatus] = useState('Connect your wallet to begin.');
   const [preview, setPreview] = useState(false); const [txHash, setTxHash] = useState(''); const [busy, setBusy] = useState(false);
+  const [tokens, setTokens] = useState<TokenAsset[]>([]); const [scanning, setScanning] = useState(false); const [scanErrors, setScanErrors] = useState<string[]>([]);
   const [handoffApp, setHandoffApp] = useState<WalletApp | null>(null); const [handoffPending, setHandoffPending] = useState(false); const timer = useRef<number | null>(null);
   const mobile = isMobileBrowser(); const activeChainId = selectedChain ?? connectedChain; const chainInfo = useMemo(() => chains.find(c => c.id === activeChainId), [activeChainId]);
 
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
 
+  async function scanWalletTokens(walletAddress = address) {
+    if (!walletAddress || !isAddress(walletAddress)) return;
+    setScanning(true); setScanErrors([]); setStatus('Scanning supported networks for token balances…');
+    const found: TokenAsset[] = []; const errors: string[] = [];
+    for (const chain of chains) {
+      try { found.push(...await discoverTokens(chain, walletAddress)); } catch (e) { errors.push(`${chain.name}: ${e instanceof Error ? e.message : 'scan failed'}`); }
+    }
+    const unique = new Map<string, TokenAsset>();
+    for (const token of found) unique.set(`${token.chainId}:${token.address.toLowerCase()}`, token);
+    const result = [...unique.values()];
+    setTokens(result); setScanErrors(errors); setScanning(false);
+    setStatus(`Scan complete: ${result.length} token balance${result.length === 1 ? '' : 's'} found across supported networks.`);
+  }
+
   async function finishConnection(eip1193: any) {
     const provider = new BrowserProvider(eip1193); const accounts = await provider.send('eth_requestAccounts', []); const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
-    setAddress(accounts[0] ?? ''); setConnectedChain(chainId); setSelectedChain(chainId); setStatus(accounts[0] ? 'Wallet connected and ready.' : 'No wallet account was returned.');
+    setAddress(accounts[0] ?? ''); setConnectedChain(chainId); setSelectedChain(chainId); setTokens([]); setScanErrors([]); setStatus(accounts[0] ? 'Wallet connected. Starting automatic token scan…' : 'No wallet account was returned.');
+    if (accounts[0]) void scanWalletTokens(accounts[0]);
   }
   async function connectBrowserWallet() {
     if (!window.ethereum) { setStatus('No browser wallet detected. Use a mobile wallet or WalletConnect.'); return; }
@@ -52,9 +83,9 @@ function App() {
     try {
       if (!walletConnectProvider) {
         walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], showQrModal: true, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
-        walletConnectProvider.on('accountsChanged', (a: string[]) => setAddress(a[0] ?? ''));
-        walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); });
-        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setStatus('Wallet disconnected.'); });
+        walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) void scanWalletTokens(next); else setTokens([]); });
+        walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address); });
+        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setStatus('Wallet disconnected.'); });
       }
       await walletConnectProvider.enable(); await finishConnection(walletConnectProvider);
     } catch (e) { setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.'); } finally { setBusy(false); }
@@ -68,7 +99,7 @@ function App() {
 
   async function switchChain(chainId: number) {
     if (!address) return void setStatus('Connect a wallet first.');
-    if (chainId === connectedChain) { setSelectedChain(chainId); return; }
+    if (chainId === connectedChain) { setSelectedChain(chainId); void scanWalletTokens(address); return; }
     setBusy(true); setStatus(`Requesting ${chains.find(c => c.id === chainId)?.name ?? 'network'} in your wallet…`);
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
@@ -78,6 +109,7 @@ function App() {
       setConnectedChain(actual); setSelectedChain(actual);
       if (actual !== chainId) throw new Error('Wallet did not switch to the selected network.');
       setPreview(false); setTxHash(''); setStatus(`Switched to ${chains.find(c => c.id === actual)?.name ?? 'the selected network'}.`);
+      void scanWalletTokens(address);
     } catch (e: any) {
       setStatus(e?.code === 4902 ? 'This wallet does not have that network configured. Add the network in the wallet, then try again.' : (e instanceof Error ? e.message : 'Network switch was cancelled.'));
     } finally { setBusy(false); }
@@ -109,9 +141,10 @@ function App() {
     <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> Non-custodial</div><h1>Recovery, with<br/><em>control.</em></h1><p>Connect your wallet, select a supported network, review exactly what will happen, and authorize each transaction yourself. Your keys never leave your wallet.</p></div><div className="hero-card"><div className="hero-card-top"><span>SECURITY</span><span>●</span></div><div className="security-icon">✓</div><strong>Wallet-controlled signing</strong><p>No seed phrases. No private keys. No hidden approvals.</p></div></section>
     <section className="workspace"><div className="section-heading"><span>01</span><div><h2>Connect</h2><p>Choose how you want to connect your wallet.</p></div></div><div className="wallet-grid">{(['metamask','trust','coinbase'] as WalletApp[]).map(app => <button className="wallet-card" key={app} onClick={() => openWalletApp(app)} disabled={busy || handoffPending || !mobile}><span className={`wallet-logo ${app}`}>{app === 'metamask' ? 'M' : app === 'trust' ? 'T' : 'C'}</span><span><b>{walletName(app)}</b><small>{mobile ? 'Open mobile app' : 'Mobile only'}</small></span><span className="arrow">↗</span></button>)}<button className="wallet-card" onClick={connectMobileWallet} disabled={busy}><span className="wallet-logo walletconnect">W</span><span><b>WalletConnect</b><small>Connect another wallet</small></span><span className="arrow">→</span></button></div>{handoffPending && <div className="handoff-panel"><div><strong>Waiting for {handoffApp && walletName(handoffApp)}</strong><p>Finish the connection in the wallet app, then return here. If it didn't open, use the fallback.</p></div><div className="handoff-actions"><button onClick={() => handoffApp && openWalletApp(handoffApp)} disabled={busy}>Try again</button><button className="solid-button" onClick={connectMobileWallet} disabled={busy}>WalletConnect</button></div></div>}</section>
     <section className="workspace"><div className="section-heading"><span>02</span><div><h2>Network</h2><p>Select the network for the transaction. Your wallet will be asked to switch before signing.</p></div></div><div className="form-card"><label>Selected network</label><select value={activeChainId ?? ''} onChange={e => switchChain(Number(e.target.value))} disabled={!address || busy}><option value="" disabled>{address ? 'Select a network' : 'Connect wallet first'}</option>{chains.map(c => <option key={c.id} value={c.id}>{c.name} · {c.native}</option>)}</select><div className="network-list">{chains.map(c => <button key={c.id} onClick={() => switchChain(c.id)} disabled={!address || busy} className={activeChainId === c.id ? 'active' : ''}>{c.name}</button>)}</div></div></section>
-    <section className="workspace"><div className="section-heading"><span>03</span><div><h2>Build a transaction</h2><p>Enter one destination and one native-asset amount. Review before signing.</p></div></div><div className="form-card"><label>Destination address</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false);setTxHash('')}} placeholder="0x…" spellCheck={false} autoComplete="off"/><label>Amount <span>({chainInfo?.native ?? 'native asset'})</span></label><input value={amount} onChange={e=>{setAmount(e.target.value);setPreview(false);setTxHash('')}} placeholder="0.00" inputMode="decimal"/><button className="wide-button" onClick={makePreview} disabled={busy || !address}>Review transaction <span>→</span></button><div className="status-line"><span className="status-dot"/>{status}</div></div></section>
+    <section className="workspace"><div className="section-heading"><span>03</span><div><h2>Automatic token scan</h2><p>{scanning ? 'Scanning supported networks and reading token balances…' : 'The scanner runs automatically after connection and after a network switch.'}</p></div></div><div className="form-card"><div className="scan-summary"><div><span className="card-kicker">TOKEN BALANCES</span><strong>{scanning ? 'Scanning…' : `${tokens.length} detected`}</strong></div><button className="wide-button" onClick={() => void scanWalletTokens()} disabled={!address || scanning || busy}>{scanning ? 'Scanning…' : 'Rescan tokens'} <span>↻</span></button></div>{tokens.length > 0 ? <div className="token-list">{tokens.map(token => <div className="info-card" key={`${token.chainId}:${token.address}`}><div className="card-kicker">{token.chainName}</div><strong>{token.name} <span>({token.symbol})</span></strong><p>{token.balance} {token.symbol}</p><small>{token.address}</small></div>)}</div> : <div className="status-line"><span className="status-dot"/>{scanning ? 'Reading token balances…' : address ? 'No indexed non-zero ERC-20 balances were found yet.' : 'Connect a wallet to start the automatic scan.'}</div>}{scanErrors.length > 0 && <details><summary>{scanErrors.length} network scan warning{scanErrors.length === 1 ? '' : 's'}</summary>{scanErrors.map(error => <p key={error}>{error}</p>)}</details>}</div></section>
+    <section className="workspace"><div className="section-heading"><span>04</span><div><h2>Build a transaction</h2><p>Enter one destination and one native-asset amount. Review before signing.</p></div></div><div className="form-card"><label>Destination address</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false);setTxHash('')}} placeholder="0x…" spellCheck={false} autoComplete="off"/><label>Amount <span>({chainInfo?.native ?? 'native asset'})</span></label><input value={amount} onChange={e=>{setAmount(e.target.value);setPreview(false);setTxHash('')}} placeholder="0.00" inputMode="decimal"/><button className="wide-button" onClick={makePreview} disabled={busy || !address}>Review transaction <span>→</span></button><div className="status-line"><span className="status-dot"/>{status}</div></div></section>
     <section className="workspace two-column"><div className="info-card"><div className="card-kicker">CONNECTED WALLET</div><div className="big-address">{address || 'Not connected'}</div><div className="chain-line">{chainInfo ? <><span className="chain-dot"/> {chainInfo.name} · {chainInfo.id}</> : 'Network not detected'}</div></div><div className="info-card"><div className="card-kicker">SUPPORTED NETWORKS</div><div className="network-list">{chains.map(c=><span key={c.id}>{c.name}</span>)}</div></div></section>
-    {preview && <section className="review-card"><div className="section-heading"><span>04</span><div><h2>Final review</h2><p>Nothing is signed until you confirm in your wallet.</p></div></div><div className="review-grid"><div><small>FROM</small><p>{address}</p></div><div><small>TO</small><p>{destination}</p></div><div><small>AMOUNT</small><p className="amount-value">{amount} {chainInfo?.native ?? 'native asset'}</p></div><div><small>NETWORK</small><p>{chainInfo?.name ?? 'Detected by wallet'}</p></div></div><div className="review-notice"><span>✓</span><div><b>Verify on your wallet</b><p>Compare the destination, amount and network on the wallet's own confirmation screen before approving.</p></div></div><button className="confirm-button" onClick={sendNativeTransaction} disabled={busy}>{busy ? 'Waiting for wallet…' : 'Confirm in wallet'} <span>→</span></button>{txHash&&<p className="tx-result"><b>Transaction submitted:</b> {chainInfo?<a href={chainInfo.explorer+txHash} target="_blank" rel="noreferrer">View on explorer ↗</a>:txHash}</p>}</section>}
+    {preview && <section className="review-card"><div className="section-heading"><span>05</span><div><h2>Final review</h2><p>Nothing is signed until you confirm in your wallet.</p></div></div><div className="review-grid"><div><small>FROM</small><p>{address}</p></div><div><small>TO</small><p>{destination}</p></div><div><small>AMOUNT</small><p className="amount-value">{amount} {chainInfo?.native ?? 'native asset'}</p></div><div><small>NETWORK</small><p>{chainInfo?.name ?? 'Detected by wallet'}</p></div></div><div className="review-notice"><span>✓</span><div><b>Verify on your wallet</b><p>Compare the destination, amount and network on the wallet's own confirmation screen before approving.</p></div></div><button className="confirm-button" onClick={sendNativeTransaction} disabled={busy}>{busy ? 'Waiting for wallet…' : 'Confirm in wallet'} <span>→</span></button>{txHash&&<p className="tx-result"><b>Transaction submitted:</b> {chainInfo?<a href={chainInfo.explorer+txHash} target="_blank" rel="noreferrer">View on explorer ↗</a>:txHash}</p>}</section>}
     <footer><div><b>Security first.</b> This interface never asks for a seed phrase or private key.</div><span>© EVM Recovery · Non-custodial</span></footer>
   </main>;
 }
