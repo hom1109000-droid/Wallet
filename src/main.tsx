@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserProvider, isAddress, parseEther } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
@@ -29,17 +29,22 @@ function getProjectId() {
   return (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
 }
 
-function openWalletApp(app: 'metamask' | 'trust' | 'coinbase') {
-  const dappUrl = encodeURIComponent(window.location.href);
-  const links = {
-    metamask: `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}${window.location.search}`,
-    trust: `https://link.trustwallet.com/open_url?url=${dappUrl}`,
-    coinbase: `https://go.cb-w.com/dapp?cb_url=${dappUrl}`,
-  };
+type WalletApp = 'metamask' | 'trust' | 'coinbase';
 
-  // Mobile browsers cannot guarantee that another app is installed or will open.
-  // These official universal/deep links ask the OS to hand the current dapp to the wallet.
-  window.location.href = links[app];
+function isMobileBrowser() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function getWalletLink(app: WalletApp) {
+  const url = window.location.href;
+  const encoded = encodeURIComponent(url);
+  const path = `${window.location.host}${window.location.pathname}${window.location.search}`;
+
+  return {
+    metamask: `https://metamask.app.link/dapp/${path}`,
+    trust: `https://link.trustwallet.com/open_url?url=${encoded}`,
+    coinbase: `https://go.cb-w.com/dapp?cb_url=${encoded}`,
+  }[app];
 }
 
 function App() {
@@ -51,6 +56,50 @@ function App() {
   const [preview, setPreview] = useState(false);
   const [txHash, setTxHash] = useState('');
   const [busy, setBusy] = useState(false);
+  const [handoffPending, setHandoffPending] = useState(false);
+  const [handoffApp, setHandoffApp] = useState<WalletApp | null>(null);
+  const handoffTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && handoffPending) {
+        setHandoffPending(false);
+        setStatus('Wallet app handoff returned to the browser. If the wallet did not open, use WalletConnect below.');
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [handoffPending]);
+
+  function clearHandoffTimer() {
+    if (handoffTimer.current !== null) {
+      window.clearTimeout(handoffTimer.current);
+      handoffTimer.current = null;
+    }
+  }
+
+  function openWalletApp(app: WalletApp) {
+    clearHandoffTimer();
+    setHandoffApp(app);
+    setHandoffPending(true);
+    setStatus(`Opening ${app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet'}…`);
+
+    const link = getWalletLink(app);
+    const started = Date.now();
+
+    // Use a normal navigation for universal/deep links. This lets the mobile OS
+    // decide whether the installed wallet can claim the URL.
+    window.location.assign(link);
+
+    // If the browser remains active, surface a fallback instead of pretending
+    // that the app was opened. The fallback never attempts to bypass the wallet.
+    handoffTimer.current = window.setTimeout(() => {
+      if (document.visibilityState === 'visible' && Date.now() - started >= 1200) {
+        setHandoffPending(false);
+        setStatus('The wallet app did not take over this page. Try WalletConnect or open the wallet app manually.');
+      }
+    }, 1800);
+  }
 
   async function finishConnection(eip1193: any) {
     const provider = new BrowserProvider(eip1193);
@@ -63,7 +112,7 @@ function App() {
 
   async function connectBrowserWallet() {
     if (!window.ethereum) {
-      setStatus('No injected wallet detected. On mobile, use a mobile-wallet button below.');
+      setStatus('No injected wallet detected. On mobile, use a wallet handoff or WalletConnect.');
       return;
     }
     try {
@@ -81,7 +130,7 @@ function App() {
     }
 
     setBusy(true);
-    setStatus('Opening the mobile wallet connection…');
+    setStatus('Starting WalletConnect…');
     try {
       if (!walletConnectProvider) {
         walletConnectProvider = await EthereumProvider.init({
@@ -91,7 +140,7 @@ function App() {
           events: ['accountsChanged', 'chainChanged', 'disconnect'],
           showQrModal: true,
           metadata: {
-            name: 'EVM Wallet Recovery',
+            name: 'EVM Recovery',
             description: 'Non-custodial EVM recovery interface',
             url: window.location.origin,
             icons: [`${window.location.origin}/favicon.svg`],
@@ -174,6 +223,7 @@ function App() {
   }
 
   const chainInfo = chains.find((c) => c.id === connectedChain);
+  const mobile = isMobileBrowser();
 
   return <main className="shell">
     <header>
@@ -191,14 +241,19 @@ function App() {
     </section>
 
     <section className="card mobile-wallets">
-      <h2>Open a mobile wallet</h2>
-      <p className="muted">On a phone, these buttons hand the current page to the selected wallet app when its official mobile link is supported. The wallet still controls every connection and transaction approval.</p>
+      <h2>Mobile wallet handoff</h2>
+      <p className="muted">
+        {mobile
+          ? 'Choose a wallet. Your browser will hand this page to the wallet when the installed app and mobile OS support the official link.'
+          : 'These controls are intended for phones and tablets. On desktop, use Browser Wallet or WalletConnect.'}
+      </p>
       <div className="wallet-buttons">
-        <button onClick={() => openWalletApp('metamask')}>Open MetaMask</button>
-        <button onClick={() => openWalletApp('trust')}>Open Trust Wallet</button>
-        <button onClick={() => openWalletApp('coinbase')}>Open Coinbase Wallet</button>
+        <button onClick={() => openWalletApp('metamask')} disabled={busy || handoffPending}>Open MetaMask</button>
+        <button onClick={() => openWalletApp('trust')} disabled={busy || handoffPending}>Open Trust Wallet</button>
+        <button onClick={() => openWalletApp('coinbase')} disabled={busy || handoffPending}>Open Coinbase Wallet</button>
       </div>
-      <button className="primary" onClick={connectMobileWallet} disabled={busy}>Connect with WalletConnect</button>
+      {handoffPending && <div className="notice">Waiting for {handoffApp === 'metamask' ? 'MetaMask' : handoffApp === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet'} to take over… If nothing happens, return here and use WalletConnect.</div>}
+      <button className="primary" onClick={connectMobileWallet} disabled={busy}>Use WalletConnect fallback</button>
     </section>
 
     <section className="card">
