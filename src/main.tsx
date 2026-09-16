@@ -15,7 +15,8 @@ const chains = [
   { id: 8453, name: 'Base', native: 'ETH', explorer: 'https://basescan.org/tx/' }, { id: 999, name: 'HyperEVM', native: 'HYPE', explorer: 'https://hyperevmscan.io/tx/' },
 ];
 type WalletApp = 'metamask' | 'trust' | 'coinbase';
-let walletConnectProvider: any = null;
+type WalletConnectProvider = Awaited<ReturnType<typeof EthereumProvider.init>>;
+let walletConnectProvider: WalletConnectProvider | null = null;
 
 const walletName = (app: WalletApp) => app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet';
 const isMobileBrowser = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -48,7 +49,17 @@ function App() {
     setBusy(true); setStatus('Preparing WalletConnect…');
     try {
       if (!walletConnectProvider) {
-        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], methods: ['eth_sendTransaction', 'eth_sign', 'personal_sign'], events: ['accountsChanged', 'chainChanged', 'disconnect'], showQrModal: true, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
+        walletConnectProvider = await EthereumProvider.init({
+          projectId,
+          optionalChains: chains.map(c => c.id) as [number, ...number[]],
+          showQrModal: true,
+          metadata: {
+            name: 'EVM Recovery',
+            description: 'Non-custodial wallet recovery interface',
+            url: window.location.origin,
+            icons: [`${window.location.origin}/favicon.svg`]
+          }
+        });
         walletConnectProvider.on('accountsChanged', (a: string[]) => setAddress(a[0] ?? ''));
         walletConnectProvider.on('chainChanged', (c: string | number) => setConnectedChain(Number(c)));
         walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setStatus('Wallet disconnected.'); });
