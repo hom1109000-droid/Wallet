@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 export type ReviewAsset = {
   chainId: number;
@@ -19,11 +19,41 @@ type Props = {
 /**
  * Read-only asset review surface.
  *
- * It intentionally has no approval, transfer, calldata, or signing controls.
- * It renders the complete set returned by the existing discovery layer so the
- * user can inspect what was found before any separate transaction flow.
+ * Selection here is presentation-only. It does not approve, transfer,
+ * construct calldata, or request a wallet signature.
  */
 export default function AllAssetsReview({ assets, scanning = false, onRescan }: Props) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const assetKey = (asset: ReviewAsset) => `${asset.chainId}:${asset.address.toLowerCase()}`;
+
+  useEffect(() => {
+    const available = new Set(assets.map(assetKey));
+    setSelected(previous => new Set([...previous].filter(key => available.has(key))));
+  }, [assets]);
+
+  const allSelected = assets.length > 0 && selected.size === assets.length;
+
+  const selectedCount = useMemo(() => selected.size, [selected]);
+
+  function toggleAsset(asset: ReviewAsset) {
+    const key = assetKey(asset);
+    setSelected(previous => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(assets.map(assetKey)));
+  }
+
+  function clearAll() {
+    setSelected(new Set());
+  }
+
   const grouped = assets.reduce<Record<string, ReviewAsset[]>>((groups, asset) => {
     (groups[asset.chainName] ??= []).push(asset);
     return groups;
@@ -48,6 +78,23 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
         )}
       </div>
 
+      {assets.length > 0 && !scanning && (
+        <div className="all-assets-review__selection" aria-label="Asset selection controls">
+          <div>
+            <strong>{selectedCount} of {assets.length} selected</strong>
+            <span>Selection is for review only.</span>
+          </div>
+          <div className="all-assets-review__selection-actions">
+            <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
+              Select all
+            </button>
+            <button type="button" className="wide-button" onClick={clearAll} disabled={selectedCount === 0}>
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {assets.length === 0 && !scanning ? (
         <div className="status-line">
           <span className="status-dot" />
@@ -63,29 +110,42 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
               </div>
 
               <div className="all-assets-review__list">
-                {chainAssets.map(asset => (
-                  <article
-                    className="all-assets-review__asset"
-                    key={`${asset.chainId}:${asset.address}`}
-                  >
-                    <div className="all-assets-review__asset-main">
-                      <div className="all-assets-review__icon" aria-hidden="true">
-                        {asset.symbol.slice(0, 1).toUpperCase()}
+                {chainAssets.map(asset => {
+                  const key = assetKey(asset);
+                  const checked = selected.has(key);
+
+                  return (
+                    <article
+                      className={`all-assets-review__asset${checked ? ' is-selected' : ''}`}
+                      key={key}
+                    >
+                      <label className="all-assets-review__checkbox">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleAsset(asset)}
+                          aria-label={`Select ${asset.name} (${asset.symbol})`}
+                        />
+                      </label>
+                      <div className="all-assets-review__asset-main">
+                        <div className="all-assets-review__icon" aria-hidden="true">
+                          {asset.symbol.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div>
+                          <strong>{asset.name}</strong>
+                          <span>{asset.symbol} · {asset.kind === 'native' ? 'Native asset' : 'ERC-20'}</span>
+                        </div>
                       </div>
-                      <div>
-                        <strong>{asset.name}</strong>
-                        <span>{asset.symbol} · {asset.kind === 'native' ? 'Native asset' : 'ERC-20'}</span>
+                      <div className="all-assets-review__balance">
+                        <strong>{asset.balance}</strong>
+                        <span>{asset.symbol}</span>
                       </div>
-                    </div>
-                    <div className="all-assets-review__balance">
-                      <strong>{asset.balance}</strong>
-                      <span>{asset.symbol}</span>
-                    </div>
-                    {asset.kind === 'erc20' && (
-                      <code title={asset.address}>{asset.address}</code>
-                    )}
-                  </article>
-                ))}
+                      {asset.kind === 'erc20' && (
+                        <code title={asset.address}>{asset.address}</code>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -95,9 +155,9 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
       <div className="all-assets-review__notice">
         <span aria-hidden="true">✓</span>
         <p>
-          This screen is informational only. It does not request a signature or
-          initiate a transfer; transaction details should be reviewed separately
-          in the connected wallet before approval.
+          Selection is informational only. It does not approve, transfer, or sign
+          anything; transaction details should be reviewed separately in the
+          connected wallet before approval.
         </p>
       </div>
     </section>
