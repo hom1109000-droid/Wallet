@@ -104,7 +104,7 @@ function App() {
     setBusy(true); setStatus('Preparing WalletConnect…');
     try {
       if (!walletConnectProvider) {
-        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], showQrModal: true, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
+        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], showQrModal: true, qrModalOptions: { enableMobileFullScreen: true }, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
         walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) { setRecoveryStep(2); void scanWalletTokens(next); } else { setTokens([]); setRecoveryStep(1); } });
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address, id); });
         walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
