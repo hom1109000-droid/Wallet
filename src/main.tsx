@@ -18,6 +18,7 @@ type WalletApp = 'metamask' | 'trust' | 'coinbase';
 type WalletConnectProvider = Awaited<ReturnType<typeof EthereumProvider.init>>;
 type TokenAsset = { chainId: number; chainName: string; address: string; name: string; symbol: string; decimals: number; balance: string; kind: 'native' | 'erc20' };
 let walletConnectProvider: WalletConnectProvider | null = null;
+let mobileWalletPopup: Window | null = null;
 
 const walletName = (app: WalletApp) => app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet';
 const isMobileBrowser = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -59,7 +60,7 @@ function App() {
   const [handoffApp, setHandoffApp] = useState<WalletApp | null>(null); const [handoffPending, setHandoffPending] = useState(false); const timer = useRef<number | null>(null);
   const mobile = isMobileBrowser(); const activeChainId = selectedChain ?? connectedChain; const chainInfo = useMemo(() => chains.find(c => c.id === activeChainId), [activeChainId]);
 
-  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); if (mobileWalletPopup && !mobileWalletPopup.closed) mobileWalletPopup.close(); }, []);
 
   async function scanWalletTokens(walletAddress = address, chainId = selectedChain ?? connectedChain) {
     if (!walletAddress || !isAddress(walletAddress) || !chainId) return;
@@ -102,16 +103,52 @@ function App() {
     const projectId = (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
     if (!projectId) { setStatus('WalletConnect is not configured. Add VITE_WALLETCONNECT_PROJECT_ID to the deployment environment.'); return; }
     setBusy(true); setStatus('Preparing WalletConnect…');
+
+    // iOS Safari blocks a wallet deep-link if the new window is created after an await.
+    // Create it immediately from the button click, then point it at the WalletConnect URI.
+    if (mobile) {
+      mobileWalletPopup = window.open('about:blank', '_blank');
+      if (!mobileWalletPopup) {
+        setBusy(false);
+        setStatus('Safari blocked the wallet handoff. Allow pop-ups and try again.');
+        return;
+      }
+    }
+
     try {
       if (!walletConnectProvider) {
-        walletConnectProvider = await EthereumProvider.init({ projectId, optionalChains: chains.map(c => c.id) as [number, ...number[]], showQrModal: true, qrModalOptions: { enableMobileFullScreen: true }, metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] } });
+        walletConnectProvider = await EthereumProvider.init({
+          projectId,
+          optionalChains: chains.map(c => c.id) as [number, ...number[]],
+          showQrModal: !mobile,
+          qrModalOptions: { enableMobileFullScreen: true },
+          metadata: {
+            name: 'EVM Recovery',
+            description: 'Non-custodial wallet recovery interface',
+            url: window.location.origin,
+            icons: [`${window.location.origin}/favicon.svg`]
+          }
+        });
+        walletConnectProvider.on('display_uri', (uri: string) => {
+          if (!mobile) return;
+          const deepLink = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
+          if (mobileWalletPopup && !mobileWalletPopup.closed) {
+            mobileWalletPopup.location.href = deepLink;
+          } else {
+            window.location.href = deepLink;
+          }
+        });
         walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) { setRecoveryStep(2); void scanWalletTokens(next); } else { setTokens([]); setRecoveryStep(1); } });
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address, id); });
         walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
       }
       const accounts = await walletConnectProvider.enable();
+      if (mobileWalletPopup && !mobileWalletPopup.closed) mobileWalletPopup.close();
       await finishConnection(walletConnectProvider, accounts?.[0]);
-    } catch (e) { setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.'); } finally { setBusy(false); }
+    } catch (e) {
+      if (mobileWalletPopup && !mobileWalletPopup.closed) mobileWalletPopup.close();
+      setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.');
+    } finally { setBusy(false); }
   }
   function openWalletApp(app: WalletApp) {
     if (!mobile) { setStatus('Mobile wallet handoff is available on phones and tablets. Use Browser Wallet or WalletConnect on desktop.'); return; }
