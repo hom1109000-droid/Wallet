@@ -86,8 +86,10 @@ function App() {
     } finally { setScanning(false); }
   }
 
-  async function finishConnection(eip1193: any) {
-    const provider = new BrowserProvider(eip1193); const accounts = await provider.send('eth_requestAccounts', []); const network = await provider.getNetwork();
+  async function finishConnection(eip1193: any, existingAccount?: string) {
+    const provider = new BrowserProvider(eip1193);
+    const accounts = existingAccount ? [existingAccount] : await provider.send('eth_requestAccounts', []);
+    const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
     setAddress(accounts[0] ?? ''); setConnectedChain(chainId); setSelectedChain(chainId); setTokens([]); setScanErrors([]); setRecoveryStep(accounts[0] ? 2 : 1); setStatus(accounts[0] ? 'Wallet connected. Scanning the selected network…' : 'No wallet account was returned.');
     if (accounts[0]) void scanWalletTokens(accounts[0], chainId);
@@ -107,7 +109,8 @@ function App() {
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address, id); });
         walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
       }
-      await walletConnectProvider.enable(); await finishConnection(walletConnectProvider);
+      const accounts = await walletConnectProvider.enable();
+      await finishConnection(walletConnectProvider, accounts?.[0]);
     } catch (e) { setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.'); } finally { setBusy(false); }
   }
   function openWalletApp(app: WalletApp) {
