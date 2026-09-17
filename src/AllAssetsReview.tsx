@@ -33,7 +33,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
   }, [assets]);
 
   const allSelected = assets.length > 0 && selected.size === assets.length;
-
   const selectedCount = useMemo(() => selected.size, [selected]);
 
   function toggleAsset(asset: ReviewAsset) {
@@ -77,23 +76,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
           </button>
         )}
       </div>
-
-      {assets.length > 0 && !scanning && (
-        <div className="all-assets-review__selection" aria-label="Asset selection controls">
-          <div>
-            <strong>{selectedCount} of {assets.length} selected</strong>
-            <span>Selection is for review only.</span>
-          </div>
-          <div className="all-assets-review__selection-actions">
-            <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
-              Select all
-            </button>
-            <button type="button" className="wide-button" onClick={clearAll} disabled={selectedCount === 0}>
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
 
       {assets.length === 0 && !scanning ? (
         <div className="status-line">
@@ -149,6 +131,24 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {assets.length > 0 && !scanning && (
+        <div className="all-assets-review__selection" aria-label="Amount review selection controls">
+          <div>
+            <span className="card-kicker">AMOUNT REVIEW</span>
+            <strong>{selectedCount} of {assets.length} selected</strong>
+            <span>Review the discovered balances here before continuing.</span>
+          </div>
+          <div className="all-assets-review__selection-actions">
+            <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
+              Select all
+            </button>
+            <button type="button" className="wide-button" onClick={clearAll} disabled={selectedCount === 0}>
+              Clear
+            </button>
+          </div>
         </div>
       )}
 
