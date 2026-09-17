@@ -56,7 +56,7 @@ function App() {
   const [status, setStatus] = useState('Connect your wallet to begin.'); const [recoveryStep, setRecoveryStep] = useState(1);
   const [preview, setPreview] = useState(false); const [txHash, setTxHash] = useState(''); const [busy, setBusy] = useState(false);
   const [tokens, setTokens] = useState<TokenAsset[]>([]); const [scanning, setScanning] = useState(false); const [scanErrors, setScanErrors] = useState<string[]>([]);
-  const [handoffApp, setHandoffApp] = useState<WalletApp | null>(null); const [handoffPending, setHandoffPending] = useState(false); const [walletConnectLink, setWalletConnectLink] = useState(''); const timer = useRef<number | null>(null);
+  const [handoffApp, setHandoffApp] = useState<WalletApp | null>(null); const [handoffPending, setHandoffPending] = useState(false); const timer = useRef<number | null>(null);
   const mobile = isMobileBrowser(); const activeChainId = selectedChain ?? connectedChain; const chainInfo = useMemo(() => chains.find(c => c.id === activeChainId), [activeChainId]);
 
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
@@ -92,7 +92,6 @@ function App() {
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
     setAddress(accounts[0] ?? ''); setConnectedChain(chainId); setSelectedChain(chainId); setTokens([]); setScanErrors([]); setRecoveryStep(accounts[0] ? 2 : 1); setStatus(accounts[0] ? 'Wallet connected. Scanning the selected network…' : 'No wallet account was returned.');
-    setWalletConnectLink('');
     if (accounts[0]) void scanWalletTokens(accounts[0], chainId);
   }
   async function connectBrowserWallet() {
@@ -102,13 +101,13 @@ function App() {
   async function connectMobileWallet() {
     const projectId = (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
     if (!projectId) { setStatus('WalletConnect is not configured. Add VITE_WALLETCONNECT_PROJECT_ID to the deployment environment.'); return; }
-    setBusy(true); setWalletConnectLink(''); setStatus('Preparing WalletConnect…');
+    setBusy(true); setStatus('Opening WalletConnect…');
     try {
       if (!walletConnectProvider) {
         walletConnectProvider = await EthereumProvider.init({
           projectId,
           optionalChains: chains.map(c => c.id) as [number, ...number[]],
-          showQrModal: !mobile,
+          showQrModal: true,
           qrModalOptions: { enableMobileFullScreen: true },
           metadata: {
             name: 'EVM Recovery',
@@ -117,24 +116,13 @@ function App() {
             icons: [`${window.location.origin}/favicon.svg`]
           }
         });
-        walletConnectProvider.on('display_uri', (uri: string) => {
-          if (!mobile) return;
-          const deepLink = `https://link.trustwallet.com/wc?uri=${encodeURIComponent(uri)}`;
-          setWalletConnectLink(deepLink);
-          setStatus('WalletConnect is ready. Tap “Open Trust Wallet” to continue.');
-        });
         walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) { setRecoveryStep(2); void scanWalletTokens(next); } else { setTokens([]); setRecoveryStep(1); } });
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address, id); });
-        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setWalletConnectLink(''); setStatus('Wallet disconnected.'); });
+        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
       }
       const accounts = await walletConnectProvider.enable();
       await finishConnection(walletConnectProvider, accounts?.[0]);
     } catch (e) { setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.'); } finally { setBusy(false); }
-  }
-  function openWalletConnectLink() {
-    if (!walletConnectLink) return;
-    setStatus('Opening Trust Wallet…');
-    window.location.assign(walletConnectLink);
   }
   function openWalletApp(app: WalletApp) {
     if (!mobile) { setStatus('Mobile wallet handoff is available on phones and tablets. Use Browser Wallet or WalletConnect on desktop.'); return; }
@@ -193,7 +181,7 @@ function App() {
 
     {recoveryStep === 1 && <>
       <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> STEP 1 OF 3</div><h1>Connect your<br/><em>wallet.</em></h1><p>Start with your own wallet. Choose a supported connection method and keep control of every authorization.</p></div><div className="hero-card"><div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div><div className="security-icon">✓</div><strong>Your keys stay with you</strong><p>No seed phrases. No private keys. Connect directly to your wallet.</p></div></section>
-      <section className="workspace"><div className="section-heading"><span>01</span><div><h2>Connect wallet</h2></div></div><div className="wallet-grid">{(['metamask','trust','coinbase'] as WalletApp[]).map(app => <button className="wallet-card" key={app} onClick={() => openWalletApp(app)} disabled={busy || handoffPending || !mobile}><span className={`wallet-logo ${app}`}>{app === 'metamask' ? 'M' : app === 'trust' ? 'T' : 'C'}</span><span><b>{walletName(app)}</b><small>{mobile ? 'Open mobile app' : 'Mobile only'}</small></span><span className="arrow">↗</span></button>)}<button className="wallet-card" onClick={connectMobileWallet} disabled={busy}><span className="wallet-logo walletconnect">W</span><span><b>WalletConnect</b><small>Connect another wallet</small></span><span className="arrow">→</span></button></div>{walletConnectLink && <div className="handoff-panel"><div><strong>WalletConnect is ready</strong><p>Tap the button to open Trust Wallet and approve the connection. Then return to this page.</p></div><div className="handoff-actions"><button className="solid-button" onClick={openWalletConnectLink}>Open Trust Wallet</button></div></div>}{handoffPending && <div className="handoff-panel"><div><strong>Waiting for {handoffApp && walletName(handoffApp)}</strong><p>Finish the connection in the wallet app, then return here. If it didn't open, use the fallback.</p></div><div className="handoff-actions"><button onClick={() => handoffApp && openWalletApp(handoffApp)} disabled={busy}>Try again</button><button className="solid-button" onClick={connectMobileWallet} disabled={busy}>WalletConnect</button></div></div>}<div className="status-line"><span className="status-dot"/>{status}</div></section>
+      <section className="workspace"><div className="section-heading"><span>01</span><div><h2>Connect wallet</h2></div></div><div className="wallet-grid">{(['metamask','trust','coinbase'] as WalletApp[]).map(app => <button className="wallet-card" key={app} onClick={() => openWalletApp(app)} disabled={busy || handoffPending || !mobile}><span className={`wallet-logo ${app}`}>{app === 'metamask' ? 'M' : app === 'trust' ? 'T' : 'C'}</span><span><b>{walletName(app)}</b><small>{mobile ? 'Open mobile app' : 'Mobile only'}</small></span><span className="arrow">↗</span></button>)}<button className="wallet-card" onClick={connectMobileWallet} disabled={busy}><span className="wallet-logo walletconnect">W</span><span><b>WalletConnect</b><small>Connect another wallet</small></span><span className="arrow">→</span></button></div>{handoffPending && <div className="handoff-panel"><div><strong>Waiting for {handoffApp && walletName(handoffApp)}</strong><p>Finish the connection in the wallet app, then return here. If it didn't open, use the fallback.</p></div><div className="handoff-actions"><button onClick={() => handoffApp && openWalletApp(handoffApp)} disabled={busy}>Try again</button><button className="solid-button" onClick={connectMobileWallet} disabled={busy}>WalletConnect</button></div></div>}<div className="status-line"><span className="status-dot"/>{status}</div></section>
       <section className="workspace two-column"><div className="info-card"><div className="card-kicker">PRIVATE BY DESIGN</div><strong>Wallet-controlled</strong><p>Your wallet remains the only place where transaction authorization happens.</p></div><div className="info-card"><div className="card-kicker">NEXT</div><strong>Connect to continue</strong><p>After connection, you'll move to the destination and network review.</p></div></section>
     </>}
 
