@@ -63,31 +63,24 @@ function App() {
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
 
   async function scanWalletTokens(walletAddress = address, chainId = selectedChain ?? connectedChain) {
-    if (!walletAddress || !isAddress(walletAddress)) return;
-    setScanning(true); setScanErrors([]); setStatus('Scanning all supported networks for non-zero assets…');
+    if (!walletAddress || !isAddress(walletAddress) || !chainId) return;
+    const chain = chains.find(c => c.id === chainId);
+    if (!chain) return;
+    setScanning(true); setScanErrors([]); setStatus(`Scanning ${chain.name} for all indexed non-zero assets…`);
     const errors: string[] = [];
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
       if (!eip1193) throw new Error('No connected wallet provider is available.');
       const found: TokenAsset[] = [];
-      await Promise.all(chains.map(async chain => {
-        try {
-          const native = await discoverNativeAsset(eip1193, chain, walletAddress);
-          if (native) found.push(native);
-        } catch (e) {
-          errors.push(`${chain.name} native balance: ${e instanceof Error ? e.message : 'scan failed'}`);
-        }
-        try {
-          found.push(...await discoverTokens(chain, walletAddress));
-        } catch (e) {
-          errors.push(`${chain.name} token indexer: ${e instanceof Error ? e.message : 'scan failed'}`);
-        }
-      }));
+      const native = await discoverNativeAsset(eip1193, chain, walletAddress);
+      if (native) found.push(native);
+      try { found.push(...await discoverTokens(chain, walletAddress)); }
+      catch (e) { errors.push(`${chain.name} token indexer: ${e instanceof Error ? e.message : 'scan failed'}`); }
       const unique = new Map<string, TokenAsset>();
       for (const token of found) unique.set(`${token.chainId}:${token.address.toLowerCase()}`, token);
       const result = [...unique.values()];
       setTokens(result); setScanErrors(errors);
-      setStatus(`Scan complete: ${result.length} non-zero asset${result.length === 1 ? '' : 's'} found across ${chains.length} supported networks.`);
+      setStatus(`Scan complete: ${result.length} non-zero asset${result.length === 1 ? '' : 's'} found on ${chain.name}.`);
     } catch (e) {
       setTokens([]); setScanErrors([e instanceof Error ? e.message : 'Asset scan failed.']);
       setStatus('Asset scan could not be completed.');
@@ -194,11 +187,11 @@ function App() {
     </>}
 
     {recoveryStep === 2 && <>
-      <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> STEP 2 OF 3</div><h1>Review your<br/><em>destination.</em></h1><p>Verify the destination and inspect all assets detected across the supported networks before continuing.</p></div><div className="hero-card"><div className="hero-card-top"><span>CONNECTED</span><span>●</span></div><div className="security-icon">✓</div><strong>{chainInfo?.name ?? 'Network detected'}</strong><p>{address ? `${address.slice(0,10)}…${address.slice(-8)}` : 'Wallet not connected'}</p></div></section>
-      <section className="workspace"><div className="section-heading"><span>02</span><div><h2>Destination & network</h2></div></div><div className="form-card"><label>Destination wallet</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false);setTxHash('')}} placeholder="0x…" spellCheck={false} autoComplete="off"/><div className="status-line"><span className="status-dot"/>All supported networks are scanned automatically after wallet connection.</div></div></section>
+      <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> STEP 2 OF 3</div><h1>Review your<br/><em>destination.</em></h1><p>Choose the network, verify the destination, and inspect the assets detected on that selected chain before continuing.</p></div><div className="hero-card"><div className="hero-card-top"><span>CONNECTED</span><span>●</span></div><div className="security-icon">✓</div><strong>{chainInfo?.name ?? 'Network detected'}</strong><p>{address ? `${address.slice(0,10)}…${address.slice(-8)}` : 'Wallet not connected'}</p></div></section>
+      <section className="workspace"><div className="section-heading"><span>02</span><div><h2>Destination & network</h2></div></div><div className="form-card"><label>Destination wallet</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false);setTxHash('')}} placeholder="0x…" spellCheck={false} autoComplete="off"/><label>Selected network</label><select value={activeChainId ?? ''} onChange={e => switchChain(Number(e.target.value))} disabled={!address || busy}><option value="" disabled>{address ? 'Select a network' : 'Connect wallet first'}</option>{chains.map(c => <option key={c.id} value={c.id}>{c.name} · {c.native}</option>)}</select><div className="network-list">{chains.map(c => <button key={c.id} onClick={() => switchChain(c.id)} disabled={!address || busy} className={activeChainId === c.id ? 'active' : ''}>{c.name}</button>)}</div></div></section>
       <section className="workspace"><AllAssetsReview assets={tokens} scanning={scanning} onRescan={() => void scanWalletTokens()} /></section>
       <section className="workspace"><div className="section-heading"><span>02B</span><div><h2>Amount to review</h2></div></div><div className="form-card"><label>Amount <span>({chainInfo?.native ?? 'native asset'})</span></label><input value={amount} onChange={e=>{setAmount(e.target.value);setPreview(false);setTxHash('')}} placeholder="0.00" inputMode="decimal"/><button className="wide-button" onClick={makePreview} disabled={busy || !address}>Review transaction <span>→</span></button><div className="status-line"><span className="status-dot"/>{status}</div></div></section>
-      <section className="workspace two-column"><div className="info-card"><div className="card-kicker">CONNECTED WALLET</div><div className="big-address">{address || 'Not connected'}</div><div className="chain-line">{chainInfo ? <><span className="chain-dot"/> {chainInfo.name} · {chainInfo.id}</> : 'Network not detected'}</div></div><div className="info-card"><div className="card-kicker">NETWORK SCAN</div><div className="network-list"><span>{chains.length} supported networks scanned automatically</span></div></div></section>
+      <section className="workspace two-column"><div className="info-card"><div className="card-kicker">CONNECTED WALLET</div><div className="big-address">{address || 'Not connected'}</div><div className="chain-line">{chainInfo ? <><span className="chain-dot"/> {chainInfo.name} · {chainInfo.id}</> : 'Network not detected'}</div></div><div className="info-card"><div className="card-kicker">SUPPORTED NETWORKS</div><div className="network-list">{chains.map(c=><span key={c.id}>{c.name}</span>)}</div></div></section>
     </>}
 
     {recoveryStep === 3 && <>
