@@ -13,17 +13,9 @@ export type ReviewAsset = {
 type Props = {
   assets: ReviewAsset[];
   scanning?: boolean;
-  onRescan?: () => void;
 };
 
-/**
- * Read-only asset review surface.
- *
- * Discovered assets are automatically selected for review. Selection here is
- * presentation-only. It does not approve, transfer, construct calldata, or
- * request a wallet signature.
- */
-export default function AllAssetsReview({ assets, scanning = false, onRescan }: Props) {
+export default function AllAssetsReview({ assets, scanning = false }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const assetKey = (asset: ReviewAsset) => `${asset.chainId}:${asset.address.toLowerCase()}`;
@@ -31,27 +23,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
   useEffect(() => {
     setSelected(new Set(assets.map(assetKey)));
   }, [assets]);
-
-  const allSelected = assets.length > 0 && selected.size === assets.length;
-  const selectedCount = useMemo(() => selected.size, [selected]);
-
-  function toggleAsset(asset: ReviewAsset) {
-    const key = assetKey(asset);
-    setSelected(previous => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function selectAll() {
-    setSelected(new Set(assets.map(assetKey)));
-  }
-
-  function clearAll() {
-    setSelected(new Set());
-  }
 
   const grouped = assets.reduce<Record<string, ReviewAsset[]>>((groups, asset) => {
     (groups[asset.chainName] ??= []).push(asset);
@@ -67,14 +38,9 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
           <p>
             {scanning
               ? 'Scanning the connected wallet…'
-              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered and ready for review.`}
+              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered and automatically selected for review.`}
           </p>
         </div>
-        {onRescan && (
-          <button type="button" className="wide-button" onClick={onRescan} disabled={scanning}>
-            {scanning ? 'Scanning…' : 'Rescan assets'} <span>↻</span>
-          </button>
-        )}
       </div>
 
       {assets.length === 0 && !scanning ? (
@@ -94,21 +60,8 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
               <div className="all-assets-review__list">
                 {chainAssets.map(asset => {
                   const key = assetKey(asset);
-                  const checked = selected.has(key);
-
                   return (
-                    <article
-                      className={`all-assets-review__asset${checked ? ' is-selected' : ''}`}
-                      key={key}
-                    >
-                      <label className="all-assets-review__checkbox">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleAsset(asset)}
-                          aria-label={`Select ${asset.name} (${asset.symbol})`}
-                        />
-                      </label>
+                    <article className="all-assets-review__asset is-selected" key={key}>
                       <div className="all-assets-review__asset-main">
                         <div className="all-assets-review__icon" aria-hidden="true">
                           {asset.symbol.slice(0, 1).toUpperCase()}
@@ -133,7 +86,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
           ))}
         </div>
       )}
-
     </section>
   );
 }
