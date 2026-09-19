@@ -152,7 +152,7 @@ function App() {
     if (destination.toLowerCase() === address.toLowerCase()) return void setStatus('Destination must differ from the connected wallet.');
     if (!chainInfo || connectedChain !== chainInfo.id) return void setStatus('Switch your wallet to the selected network first.');
     if (tokens.length === 0) return void setStatus('No discovered assets are available to review.');
-    setPreview(true); setRecoveryStep(3); setTxHash(''); setStatus('Asset review ready. Nothing has been signed.');
+    setPreview(true); setRecoveryStep(2); setTxHash(''); setStatus('Asset review ready. Nothing has been signed.');
   }
   async function sendNativeTransaction() {
     if (!address || !isAddress(destination)) return void setStatus('Connect a wallet and enter a valid destination first.');
@@ -174,7 +174,7 @@ function App() {
     <header className="topbar"><div className="brand-lockup"><div className="brand-mark">E</div><div><div className="brand">EVM Recovery</div></div></div><div className="wallet-actions"><button className="ghost-button" onClick={connectBrowserWallet} disabled={busy}>{address ? `${address.slice(0,6)}…${address.slice(-4)}` : 'Connect wallet'}</button><button className="solid-button" onClick={connectMobileWallet} disabled={busy}>WalletConnect</button></div></header>
 
     <div className="workspace" style={{paddingBottom: 0}}>
-      <div className="section-heading" style={{marginBottom: 0}}><div style={{width:'100%'}}><div style={{display:'flex',justifyContent:'flex-end',gap:'12px',alignItems:'center'}}><small style={{opacity:.65}}>Step {recoveryStep} of 2</small></div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px',marginTop:'14px'}}>{stepLabels.map((label,index)=><div key={label}><div style={{height:'4px',borderRadius:'999px',background:index < recoveryStep ? 'currentColor':'rgba(127,127,127,.2)'}}/><small style={{display:'block',marginTop:'7px',opacity:index + 1 === recoveryStep ? 1:.55,fontWeight:index + 1 === recoveryStep ? 700:500}}>{label}</small></div>)}</div></div></div>
+      {address && <div className="section-heading" style={{marginBottom: 0}}><div style={{width:'100%'}}><div style={{display:'flex',justifyContent:'flex-end',gap:'12px',alignItems:'center'}}><small style={{opacity:.65}}>Step {recoveryStep} of 2</small></div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px',marginTop:'14px'}}>{stepLabels.map((label,index)=><div key={label}><div style={{height:'4px',borderRadius:'999px',background:index < recoveryStep ? 'currentColor':'rgba(127,127,127,.2)'}}/><small style={{display:'block',marginTop:'7px',opacity:index + 1 === recoveryStep ? 1:.55,fontWeight:index + 1 === recoveryStep ? 700:500}}>{label}</small></div>)}</div></div></div>
     </div>
 
     {recoveryStep === 1 && <>
