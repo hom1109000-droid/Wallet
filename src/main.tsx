@@ -112,12 +112,7 @@ function App() {
           optionalChains: chains.map(c => c.id) as [number, ...number[]],
           showQrModal: true,
           qrModalOptions: { enableMobileFullScreen: true },
-          metadata: {
-            name: 'EVM Recovery',
-            description: 'Non-custodial wallet recovery interface',
-            url: window.location.origin,
-            icons: [`${window.location.origin}/favicon.svg`]
-          }
+          metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery interface', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] }
         });
         walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) { setRecoveryStep(2); void scanWalletTokens(next); } else { setTokens([]); setRecoveryStep(1); } });
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address); });
@@ -191,7 +186,7 @@ function App() {
     {recoveryStep === 2 && <>
       <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> STEP 2 OF 3</div><h1>Review your<br/><em>destination.</em></h1><p>Connect once, review your portfolio across supported networks, then verify the destination and transaction network before continuing.</p></div><div className="hero-card"><div className="hero-card-top"><span>CONNECTED</span><span>●</span></div><div className="security-icon">✓</div><strong>{chainInfo?.name ?? 'Network detected'}</strong><p>{address ? `${address.slice(0,10)}…${address.slice(-8)}` : 'Wallet not connected'}</p></div></section>
       <section className="workspace"><div className="section-heading"><span>02</span><div><h2>Destination & network</h2></div></div><div className="form-card"><label>Destination wallet</label><input value={destination} onChange={e=>{setDestination(e.target.value);setPreview(false);setTxHash('')}} placeholder="0x…" spellCheck={false} autoComplete="off"/><label>Selected network</label><select value={activeChainId ?? ''} onChange={e => switchChain(Number(e.target.value))} disabled={!address || busy}><option value="" disabled>{address ? 'Select a network' : 'Connect wallet first'}</option>{chains.map(c => <option key={c.id} value={c.id}>{c.name} · {c.native}</option>)}</select><label>Native amount to approve</label><input value={amount} onChange={e=>{setAmount(e.target.value);setPreview(false);setTxHash('')}} placeholder="0.0" inputMode="decimal" autoComplete="off"/><div className="network-list">{chains.map(c => <button key={c.id} onClick={() => switchChain(c.id)} disabled={!address || busy} className={activeChainId === c.id ? 'active' : ''}>{c.name}</button>)}</div></div></section>
-      <section className="workspace"><AllAssetsReview assets={tokens} scanning={scanning} onRescan={() => void scanWalletTokens(address)} /><div style={{display:"flex",justifyContent:"flex-end",marginTop:"16px"}}><button className="solid-button" onClick={makePreview} disabled={busy || scanning || tokens.length === 0}>Review transaction</button></div></section>
+      <section className="workspace"><AllAssetsReview assets={tokens} scanning={scanning} /><div style={{display:"flex",justifyContent:"flex-end",marginTop:"16px"}}><button className="solid-button" onClick={makePreview} disabled={busy || scanning || tokens.length === 0}>Review transaction</button></div></section>
     </>}
 
     {recoveryStep === 3 && <>
