@@ -156,8 +156,8 @@ function App() {
     if (!address) return void setStatus('Connect a wallet first.'); if (!isAddress(destination)) return void setStatus('Enter a valid EVM destination address.');
     if (destination.toLowerCase() === address.toLowerCase()) return void setStatus('Destination must differ from the connected wallet.');
     if (!chainInfo || connectedChain !== chainInfo.id) return void setStatus('Switch your wallet to the selected network first.');
-    try { if (parseEther(amount || '0') <= 0n) throw new Error(); } catch { return void setStatus('Enter a valid native-coin amount.'); }
-    setPreview(true); setRecoveryStep(3); setTxHash(''); setStatus('Transaction ready for review. Nothing has been signed.');
+    if (tokens.length === 0) return void setStatus('No discovered assets are available to review.');
+    setPreview(true); setRecoveryStep(3); setTxHash(''); setStatus('Asset review ready. Nothing has been signed.');
   }
   async function sendNativeTransaction() {
     if (!address || !isAddress(destination)) return void setStatus('Connect a wallet and enter a valid destination first.');
