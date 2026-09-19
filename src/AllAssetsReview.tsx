@@ -134,23 +134,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
         </div>
       )}
 
-      {assets.length > 0 && !scanning && (
-        <div className="all-assets-review__selection" aria-label="Amount review selection controls">
-          <div>
-            <span className="card-kicker">RECOVERY REVIEW</span>
-            <strong>{selectedCount} of {assets.length} selected</strong>
-          </div>
-          <div className="all-assets-review__selection-actions">
-            <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
-              Select all
-            </button>
-            <button type="button" className="wide-button" onClick={clearAll} disabled={selectedCount === 0}>
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-
     </section>
   );
 }
