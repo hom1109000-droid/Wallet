@@ -139,7 +139,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
           <div>
             <span className="card-kicker">RECOVERY REVIEW</span>
             <strong>{selectedCount} of {assets.length} selected</strong>
-            <span>All discovered balances are included in the review by default. Deselect anything you do not want to review.</span>
           </div>
           <div className="all-assets-review__selection-actions">
             <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
@@ -152,14 +151,6 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
         </div>
       )}
 
-      <div className="all-assets-review__notice">
-        <span aria-hidden="true">✓</span>
-        <p>
-          Selection is informational only. It does not approve, transfer, or sign
-          anything; transaction details should be reviewed separately in the
-          connected wallet before approval.
-        </p>
-      </div>
     </section>
   );
 }
