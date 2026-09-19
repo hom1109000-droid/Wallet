@@ -175,7 +175,7 @@ function App() {
 
     <div className="workspace" style={{paddingBottom: 0}}>
       {address && <div className="section-heading" style={{marginBottom: 0}}><div style={{width:'100%'}}><div style={{display:'flex',justifyContent:'flex-end',gap:'12px',alignItems:'center'}}><small style={{opacity:.65}}>Step {recoveryStep} of 2</small></div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px',marginTop:'14px'}}>{stepLabels.map((label,index)=><div key={label}><div style={{height:'4px',borderRadius:'999px',background:index < recoveryStep ? 'currentColor':'rgba(127,127,127,.2)'}}/><small style={{display:'block',marginTop:'7px',opacity:index + 1 === recoveryStep ? 1:.55,fontWeight:index + 1 === recoveryStep ? 700:500}}>{label}</small></div>)}</div></div></div>
-    </div>}
+    </div>
 
     {!address && <>
       <section className="hero-section"><div className="hero-copy"><div className="status-pill"><span className="live-dot"/> WALLET CONNECTION</div><h1>Connect your<br/><em>wallet.</em></h1><p>Start with your own wallet. Connect once, then review your supported-network portfolio without changing networks.</p></div><div className="hero-card"><div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div><div className="security-icon">✓</div><strong>Your keys stay with you</strong><p>No seed phrases. No private keys. Connect directly to your wallet.</p></div></section>
