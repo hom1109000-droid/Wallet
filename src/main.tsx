@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserProvider, formatUnits, isAddress, parseEther } from 'ethers';
+import { BrowserProvider, JsonRpcProvider, formatUnits, isAddress, parseEther } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import AllAssetsReview from './AllAssetsReview';
 import './styles.css';
@@ -44,19 +44,7 @@ async function discoverTokens(chain: typeof chains[number], address: string): Pr
 
 async function discoverNativeAsset(chain: typeof chains[number], address: string): Promise<TokenAsset | null> {
   if (!chain.rpcUrl) throw new Error(`${chain.name} does not have a read-only RPC configured.`);
-  const provider = new BrowserProvider(new (class {
-    request(args: { method: string; params?: any[] }) {
-      return fetch(chain.rpcUrl!, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: args.method, params: args.params ?? [] }) })
-        .then(async response => {
-          if (!response.ok) throw new Error(`RPC returned HTTP ${response.status}`);
-          const payload = await response.json();
-          if (payload.error) throw new Error(payload.error.message || 'RPC request failed');
-          return payload.result;
-        });
-    }
-  }) as any);
-  const network = await provider.getNetwork();
-  if (Number(network.chainId) !== chain.id) throw new Error(`Read-only RPC resolved to an unexpected network for ${chain.name}.`);
+  const provider = new JsonRpcProvider(chain.rpcUrl, chain.id, { staticNetwork: true });
   const rawBalance = await provider.getBalance(address);
   if (rawBalance <= 0n) return null;
   return { chainId: chain.id, chainName: chain.name, address: 'native', name: chain.native, symbol: chain.native, decimals: 18, balance: formatUnits(rawBalance, 18), kind: 'native' };
@@ -133,7 +121,7 @@ function App() {
         });
         walletConnectProvider.on('accountsChanged', (a: string[]) => { const next = a[0] ?? ''; setAddress(next); if (next) { setRecoveryStep(2); void scanWalletTokens(next); } else { setTokens([]); setRecoveryStep(1); } });
         walletConnectProvider.on('chainChanged', (c: string | number) => { const id = Number(c); setConnectedChain(id); setSelectedChain(id); if (address) void scanWalletTokens(address); });
-        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
+        walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setScanErrors([]); setScanSummary({scanned:0,successful:0,assets:0}); setRecoveryStep(1); setStatus('Wallet disconnected.'); });
       }
       const accounts = await walletConnectProvider.enable();
       await finishConnection(walletConnectProvider, accounts?.[0]);
