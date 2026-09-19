@@ -136,7 +136,7 @@ function App() {
 
   async function switchChain(chainId: number) {
     if (!address) return void setStatus('Connect a wallet first.');
-    if (chainId === connectedChain) { setSelectedChain(chainId); void scanWalletTokens(address, chainId); return; }
+    if (chainId === connectedChain) { setSelectedChain(chainId); void scanWalletTokens(address); return; }
     setBusy(true); setStatus(`Requesting ${chains.find(c => c.id === chainId)?.name ?? 'network'} in your wallet…`);
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
@@ -146,7 +146,7 @@ function App() {
       setConnectedChain(actual); setSelectedChain(actual);
       if (actual !== chainId) throw new Error('Wallet did not switch to the selected network.');
       setPreview(false); setTxHash(''); setStatus(`Switched to ${chains.find(c => c.id === actual)?.name ?? 'the selected network'}. Scanning assets…`);
-      void scanWalletTokens(address, actual);
+      void scanWalletTokens(address);
     } catch (e: any) {
       setStatus(e?.code === 4902 ? 'This wallet does not have that network configured. Add the network in the wallet, then try again.' : (e instanceof Error ? e.message : 'Network switch was cancelled.'));
     } finally { setBusy(false); }
