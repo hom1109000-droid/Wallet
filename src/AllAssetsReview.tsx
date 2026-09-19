@@ -19,8 +19,9 @@ type Props = {
 /**
  * Read-only asset review surface.
  *
- * Selection here is presentation-only. It does not approve, transfer,
- * construct calldata, or request a wallet signature.
+ * Discovered assets are automatically selected for review. Selection here is
+ * presentation-only. It does not approve, transfer, construct calldata, or
+ * request a wallet signature.
  */
 export default function AllAssetsReview({ assets, scanning = false, onRescan }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -28,8 +29,7 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
   const assetKey = (asset: ReviewAsset) => `${asset.chainId}:${asset.address.toLowerCase()}`;
 
   useEffect(() => {
-    const available = new Set(assets.map(assetKey));
-    setSelected(previous => new Set([...previous].filter(key => available.has(key))));
+    setSelected(new Set(assets.map(assetKey)));
   }, [assets]);
 
   const allSelected = assets.length > 0 && selected.size === assets.length;
@@ -67,7 +67,7 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
           <p>
             {scanning
               ? 'Scanning the connected wallet…'
-              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered.`}
+              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered and ready for review.`}
           </p>
         </div>
         {onRescan && (
@@ -137,9 +137,9 @@ export default function AllAssetsReview({ assets, scanning = false, onRescan }: 
       {assets.length > 0 && !scanning && (
         <div className="all-assets-review__selection" aria-label="Amount review selection controls">
           <div>
-            <span className="card-kicker">AMOUNT REVIEW</span>
+            <span className="card-kicker">RECOVERY REVIEW</span>
             <strong>{selectedCount} of {assets.length} selected</strong>
-            <span>Review the discovered balances here before continuing.</span>
+            <span>All discovered balances are included in the review by default. Deselect anything you do not want to review.</span>
           </div>
           <div className="all-assets-review__selection-actions">
             <button type="button" className="wide-button" onClick={selectAll} disabled={allSelected}>
