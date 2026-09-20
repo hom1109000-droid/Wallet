@@ -9,7 +9,7 @@ declare global { interface Window { ethereum?: any } }
 
 const chains = [
   { id: 1, name: 'Ethereum', native: 'ETH', explorer: 'https://etherscan.io/tx/', tokenApi: 'https://eth.blockscout.com/api/v2', rpcUrl: 'https://eth.llamarpc.com' }, { id: 10, name: 'OP Mainnet', native: 'ETH', explorer: 'https://optimistic.etherscan.io/tx/', tokenApi: 'https://optimism.blockscout.com/api/v2', rpcUrl: 'https://optimism.llamarpc.com' },
-  { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/', rpcUrl: 'https://bsc-dataseed.binance.org' }, { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosis.blockscout.com/tx/', tokenApi: 'https://gnosis.blockscout.com/api/v2', rpcUrl: 'https://rpc.gnosischain.com' },
+  { id: 56, name: 'BNB Smart Chain', native: 'BNB', explorer: 'https://bscscan.com/tx/', tokenApi: 'https://bsc.blockscout.com/api/v2', rpcUrl: 'https://bsc-dataseed.binance.org' }, { id: 100, name: 'Gnosis', native: 'xDAI', explorer: 'https://gnosis.blockscout.com/tx/', tokenApi: 'https://gnosis.blockscout.com/api/v2', rpcUrl: 'https://rpc.gnosischain.com' },
   { id: 137, name: 'Polygon', native: 'POL', explorer: 'https://polygonscan.com/tx/', tokenApi: 'https://polygon.blockscout.com/api/v2', rpcUrl: 'https://polygon-rpc.com' }, { id: 143, name: 'Monad', native: 'MON', explorer: 'monadscan.com/tx/', rpcUrl: 'https://monad-rpc.publicnode.com' },
   { id: 130, name: 'Unichain', native: 'ETH', explorer: 'https://uniscan.xyz/tx/', tokenApi: 'https://unichain.blockscout.com/api/v2', rpcUrl: 'https://mainnet.unichain.org' }, { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'soneium.blockscout.com/tx/', tokenApi: 'https://soneium.blockscout.com/api/v2', rpcUrl: 'https://rpc.soneium.org' },
   { id: 42161, name: 'Arbitrum One', native: 'ETH', explorer: 'https://arbiscan.io/tx/', tokenApi: 'https://arbitrum.blockscout.com/api/v2', rpcUrl: 'https://arbitrum-one.publicnode.com' }, { id: 43114, name: 'Avalanche C-Chain', native: 'AVAX', explorer: 'https://snowtrace.io/tx/', tokenApi: 'https://avalanche.blockscout.com/api/v2', rpcUrl: 'https://avalanche-c-chain-rpc.publicnode.com' },
@@ -30,16 +30,27 @@ function walletLink(app: WalletApp) {
 
 async function discoverTokens(chain: typeof chains[number], address: string): Promise<TokenAsset[]> {
   if (!chain.tokenApi) return [];
-  const response = await fetch(`${chain.tokenApi}/addresses/${address}/token-balances?type=ERC-20&limit=1000`);
-  if (!response.ok) throw new Error(`${chain.name} token indexer returned ${response.status}`);
-  const data = await response.json() as any[];
-  return data.filter(item => item?.token?.address && item?.value && item.value !== '0').map(item => {
-    const token = item.token;
-    const decimals = Number(token.decimals ?? 18);
-    let balance = item.value as string;
-    try { balance = formatUnits(item.value, decimals); } catch { /* keep raw value */ }
-    return { chainId: chain.id, chainName: chain.name, address: token.address, name: token.name || 'Unknown token', symbol: token.symbol || 'TOKEN', decimals, balance, kind: 'erc20' as const };
-  });
+  const found: TokenAsset[] = [];
+  let next: string | null = `${chain.tokenApi}/addresses/${address}/token-balances?type=ERC-20&limit=1000`;
+  let pages = 0;
+  while (next && pages < 20) {
+    const response = await fetch(next);
+    if (!response.ok) throw new Error(`${chain.name} token indexer returned ${response.status}`);
+    const payload = await response.json() as { items?: any[]; next_page_params?: Record<string, string | number> | null };
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    for (const item of items) {
+      if (!item?.token?.address || !item?.value || item.value === '0') continue;
+      const token = item.token;
+      const decimals = Number(token.decimals ?? 18);
+      let balance = item.value as string;
+      try { balance = formatUnits(item.value, decimals); } catch { /* keep raw value */ }
+      found.push({ chainId: chain.id, chainName: chain.name, address: token.address, name: token.name || 'Unknown token', symbol: token.symbol || 'TOKEN', decimals, balance, kind: 'erc20' as const });
+    }
+    const params = payload.next_page_params;
+    next = params ? `${chain.tokenApi}/addresses/${address}/token-balances?${new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))}` : null;
+    pages += 1;
+  }
+  return found;
 }
 
 async function discoverNativeAsset(chain: typeof chains[number], address: string): Promise<TokenAsset | null> {
