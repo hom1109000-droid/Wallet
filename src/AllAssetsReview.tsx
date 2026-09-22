@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React from 'react';
 
 export type ReviewAsset = {
   chainId: number;
@@ -16,14 +16,6 @@ type Props = {
 };
 
 export default function AllAssetsReview({ assets, scanning = false }: Props) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  const assetKey = (asset: ReviewAsset) => `${asset.chainId}:${asset.address.toLowerCase()}`;
-
-  useEffect(() => {
-    setSelected(new Set(assets.map(assetKey)));
-  }, [assets]);
-
   const grouped = assets.reduce<Record<string, ReviewAsset[]>>((groups, asset) => {
     (groups[asset.chainName] ??= []).push(asset);
     return groups;
@@ -38,7 +30,7 @@ export default function AllAssetsReview({ assets, scanning = false }: Props) {
           <p>
             {scanning
               ? 'Scanning the connected wallet…'
-              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered and automatically selected for review.`}
+              : `${assets.length} non-zero asset${assets.length === 1 ? '' : 's'} discovered — all auto-selected.`}
           </p>
         </div>
       </div>
@@ -54,12 +46,11 @@ export default function AllAssetsReview({ assets, scanning = false }: Props) {
             <div className="all-assets-review__group" key={chainName}>
               <div className="all-assets-review__chain">
                 <strong>{chainName}</strong>
-                <span>{chainAssets.length} asset{chainAssets.length === 1 ? '' : 's'}</span>
+                <span>{chainAssets.length} asset{chainAssets.length === 1 ? '' : 's'} · all selected</span>
               </div>
-
               <div className="all-assets-review__list">
                 {chainAssets.map(asset => {
-                  const key = assetKey(asset);
+                  const key = `${asset.chainId}:${asset.address.toLowerCase()}`;
                   return (
                     <article className="all-assets-review__asset is-selected" key={key}>
                       <div className="all-assets-review__asset-main">
