@@ -1,7 +1,216 @@
 import { ContractFactory, Contract, MaxUint256, BrowserProvider, getAddress } from 'ethers';
+import {
+  PERMIT2_ADDRESS,
+  SWEEPER_ABI,
+  SWEEPER_BYTECODE,
+} from './sweeperBytecode';
 
-export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+export { PERMIT2_ADDRESS, SWEEPER_ABI, SWEEPER_BYTECODE };
 
-export const SWEEPER_ABI = [{"inputs":[{"internalType":"address","name":"recovery_","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"LengthMismatch","type":"error"},{"inputs":[],"name":"TransferFailed","type":"error"},{"inputs":[],"name":"ZeroAddress","type":"error"},{"inputs":[],"name":"PERMIT2","outputs":[{"internalType":"contract ISignatureTransfer","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"recovery","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address[]","name":"tokens","type":"address[]"}],"name":"sweepTokensAndNative","outputs":[],"stateMutability":"payable","type":"function"},{"inputs":[{"components":[{"components":[{"internalType":"address","name":"token","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"internalType":"struct ISignatureTransfer.TokenPermissions[]","name":"permitted","type":"tuple[]"},{"internalType":"uint256","name":"nonce","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"internalType":"struct ISignatureTransfer.PermitBatchTransferFrom","name":"permit","type":"tuple"},{"components":[{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"requestedAmount","type":"uint256"}],"internalType":"struct ISignatureTransfer.SignatureTransferDetails[]","name":"details","type":"tuple[]"},{"internalType":"bytes","name":"signature","type":"bytes"}],"name":"sweepWithPermit2","outputs":[],"stateMutability":"payable","type":"function"},{"stateMutability":"payable","type":"receive"}] as const;
+const ERC20_APPROVE_ABI = [
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address) view returns (uint256)',
+] as const;
 
-const SWEEPER_B64 = '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';
+const storageKey = (chainId: number, recovery: string) =>
+  `sweeper:${chainId}:${recovery.toLowerCase()}`;
+
+export function loadSweeperAddress(chainId: number, recovery: string): string | null {
+  try {
+    return localStorage.getItem(storageKey(chainId, recovery));
+  } catch {
+    return null;
+  }
+}
+
+export function saveSweeperAddress(chainId: number, recovery: string, addr: string) {
+  try {
+    localStorage.setItem(storageKey(chainId, recovery), addr);
+  } catch {}
+}
+
+export async function deploySweeper(
+  signer: any,
+  recovery: string,
+  onStatus?: (s: string) => void,
+): Promise<string> {
+  onStatus?.('Deploy RecoverySweeper — confirm in wallet…');
+  const factory = new ContractFactory(SWEEPER_ABI, SWEEPER_BYTECODE, signer);
+  const contract = await factory.deploy(recovery);
+  onStatus?.('Waiting for deploy confirmation…');
+  await contract.waitForDeployment();
+  return await contract.getAddress();
+}
+
+async function ensurePermit2Allowances(
+  signer: any,
+  tokenAddresses: string[],
+  onStatus?: (s: string) => void,
+): Promise<void> {
+  const sender = await signer.getAddress();
+  for (const tokenAddr of tokenAddresses) {
+    try {
+      const token = new Contract(tokenAddr, ERC20_APPROVE_ABI, signer);
+      const bal: bigint = await token.balanceOf(sender);
+      if (bal <= 0n) continue;
+      const current: bigint = await token.allowance(sender, PERMIT2_ADDRESS);
+      if (current >= bal) continue;
+      onStatus?.(`Approve ${tokenAddr.slice(0, 8)}… to Permit2 (one-time)`);
+      const tx = await token.approve(PERMIT2_ADDRESS, MaxUint256);
+      await tx.wait();
+    } catch (e: any) {
+      if (e?.code === 4001) throw e;
+      onStatus?.(`Permit2 approve skipped: ${e?.message || 'error'}`);
+    }
+  }
+}
+
+const PERMIT2_TYPES = {
+  PermitBatchTransferFrom: [
+    { name: 'permitted', type: 'TokenPermissions[]' },
+    { name: 'spender', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+  TokenPermissions: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+  ],
+};
+
+export async function approveAndSweep(
+  signer: any,
+  provider: BrowserProvider,
+  sweeperAddr: string,
+  tokenAddresses: string[],
+  sendNative: boolean,
+  onStatus?: (s: string) => void,
+): Promise<string | null> {
+  const sender = await signer.getAddress();
+  const network = await provider.getNetwork();
+  const chainId = Number(network.chainId);
+  let lastHash: string | null = null;
+
+  await ensurePermit2Allowances(signer, tokenAddresses, onStatus);
+
+  const sweeper = new Contract(sweeperAddr, SWEEPER_ABI, signer);
+  let nativeValue = 0n;
+  if (sendNative) {
+    const bal = await provider.getBalance(sender);
+    const feeData = await provider.getFeeData();
+    const maxFee = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+    const gasReserve = 350000n * maxFee * 12n / 10n;
+    if (bal > gasReserve) nativeValue = bal - gasReserve;
+  }
+
+  const permitted: { token: string; amount: bigint }[] = [];
+  const details: { to: string; requestedAmount: bigint }[] = [];
+  const recovery: string = await sweeper.recovery();
+
+  for (const tokenAddr of tokenAddresses) {
+    try {
+      const token = new Contract(tokenAddr, ERC20_APPROVE_ABI, provider);
+      const bal: bigint = await token.balanceOf(sender);
+      if (bal <= 0n) continue;
+      permitted.push({ token: getAddress(tokenAddr), amount: bal });
+      details.push({ to: getAddress(recovery), requestedAmount: bal });
+    } catch {}
+  }
+
+  if (permitted.length === 0) {
+    onStatus?.('Sweep native — confirm in wallet…');
+    const tx = await sweeper.sweepTokensAndNative([], { value: nativeValue });
+    lastHash = tx.hash;
+    await tx.wait();
+    return lastHash;
+  }
+
+  onStatus?.('Sign once for all tokens (Permit2)…');
+  const nonceWord = BigInt(Math.floor(Math.random() * 1_000_000_000));
+  const nonceVal = (nonceWord << 8n) | 0n;
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+  const domain = {
+    name: 'Permit2',
+    chainId,
+    verifyingContract: PERMIT2_ADDRESS,
+  };
+
+  const message = {
+    permitted: permitted.map(p => ({ token: p.token, amount: p.amount })),
+    spender: getAddress(sweeperAddr),
+    nonce: nonceVal,
+    deadline,
+  };
+
+  let signature: string;
+  try {
+    signature = await signer.signTypedData(domain, PERMIT2_TYPES, message);
+  } catch (e: any) {
+    onStatus?.('Permit2 sign cancelled — classic fallback…');
+    return classicApproveAndSweep(signer, provider, sweeperAddr, tokenAddresses, sendNative, onStatus);
+  }
+
+  onStatus?.('One sweep tx (all tokens + native) — confirm in wallet…');
+  const permitStruct = {
+    permitted: permitted.map(p => ({ token: p.token, amount: p.amount })),
+    nonce: nonceVal,
+    deadline,
+  };
+
+  try {
+    const tx = await sweeper.sweepWithPermit2(permitStruct, details, signature, { value: nativeValue });
+    lastHash = tx.hash;
+    await tx.wait();
+    return lastHash;
+  } catch (e: any) {
+    if (e?.code === 4001) throw e;
+    onStatus?.('Permit2 sweep failed — classic fallback…');
+    return classicApproveAndSweep(signer, provider, sweeperAddr, tokenAddresses, sendNative, onStatus);
+  }
+}
+
+async function classicApproveAndSweep(
+  signer: any,
+  provider: BrowserProvider,
+  sweeperAddr: string,
+  tokenAddresses: string[],
+  sendNative: boolean,
+  onStatus?: (s: string) => void,
+): Promise<string | null> {
+  const sender = await signer.getAddress();
+  let lastHash: string | null = null;
+
+  for (const tokenAddr of tokenAddresses) {
+    try {
+      const token = new Contract(tokenAddr, ERC20_APPROVE_ABI, signer);
+      const bal: bigint = await token.balanceOf(sender);
+      if (bal <= 0n) continue;
+      const current: bigint = await token.allowance(sender, sweeperAddr);
+      if (current >= bal) continue;
+      onStatus?.(`Approve token ${tokenAddr.slice(0, 8)}… in wallet`);
+      const tx = await token.approve(sweeperAddr, MaxUint256);
+      lastHash = tx.hash;
+      await tx.wait();
+    } catch (e: any) {
+      if (e?.code === 4001) throw e;
+    }
+  }
+
+  const sweeper = new Contract(sweeperAddr, SWEEPER_ABI, signer);
+  let nativeValue = 0n;
+  if (sendNative) {
+    const bal = await provider.getBalance(sender);
+    const feeData = await provider.getFeeData();
+    const maxFee = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+    const gasReserve = 250000n * maxFee * 12n / 10n;
+    if (bal > gasReserve) nativeValue = bal - gasReserve;
+  }
+
+  onStatus?.('Sweep once — confirm in wallet…');
+  const tx = await sweeper.sweepTokensAndNative(tokenAddresses, { value: nativeValue });
+  lastHash = tx.hash;
+  await tx.wait();
+  return lastHash;
+}
