@@ -444,13 +444,12 @@ function App() {
               <div className="approve-stack">
                 {(focusChain ? [focusedFunded] : chainsWithAssets).map(c => {
                   const active = busy && focusChain === c.id;
-                  const count = tokens.filter(t => Number(t.chainId) === c.id).length;
                   return (
                     <button key={c.id} type="button" className="solid-button approve-cta"
                       disabled={busy || scanning || !isAddress(destination)}
                       onClick={() => { void recoverChainAssets(c.id); }}>
-                      {active ? `${c.name}: deploy / approve / sweep…` : `Approve ${c.name}`}
-                      <small>{count} asset{count === 1 ? '' : 's'} · native + tokens</small>
+                      {active ? `${c.name}: processing…` : `Approve ${c.name}`}
+
                     </button>
                   );
                 })}
