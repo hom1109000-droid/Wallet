@@ -440,8 +440,7 @@ function App() {
                 {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Per network: deploy (first time) → approve each token → one sweep of all + native.' : 'No balances found.'}
               </p>
             </div>
-            {address && !scanning && chainsWithAssets.length > 0 && (
-              <div className="funded-networks" style={{ marginTop: 16 }}>
+<div className="funded-networks" style={{ marginTop: 16 }}>
                 <label style={{ display: 'block', marginBottom: 8, opacity: 0.85 }}>Networks with assets</label>
                 <div className="chain-chip-row">
                   {chainsWithAssets.map(c => {
