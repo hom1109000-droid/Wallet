@@ -437,7 +437,7 @@ function App() {
             <div className="form-card">
               <label>{scanning ? 'Connecting…' : 'Networks ready to approve'}</label>
               <p style={{ margin: '8px 0 0', opacity: 0.8, fontSize: '0.9rem' }}>
-                {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Per network: deploy (first time) → approve each token → one sweep of all + native.' : 'No balances found.'}
+                {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? '' : 'No balances found.'}
               </p>
             </div>
             {!scanning && focusedFunded && (
