@@ -467,9 +467,6 @@ function App() {
                 </div>
               </div>
             )}
-            {!scanning && tokens.length > 0 && (
-              <AllAssetsReview assets={tokens} scanning={scanning} />
-            )}
             {!scanning && focusedFunded && (
               <div className="approve-stack">
                 {(focusChain ? [focusedFunded] : chainsWithAssets).map(c => {
