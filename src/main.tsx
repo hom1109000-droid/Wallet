@@ -238,7 +238,7 @@ function App() {
         s => setStatus(`${label}: ${s}`),
       );
       if (hash) setTxHash(hash);
-      setStatus(`${label}: done. Swept to recovery.`);
+      setStatus(`${label}: done. Started recovery.`);
     } catch (e: any) {
       if (e?.code === 4001) setStatus('Cancelled in wallet.');
       else setStatus(e instanceof Error ? e.message : 'Approve/sweep failed.');
