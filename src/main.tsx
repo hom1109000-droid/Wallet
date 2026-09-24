@@ -440,32 +440,6 @@ function App() {
                 {scanning ? 'Connecting across networks…' : chainsWithAssets.length ? 'Per network: deploy (first time) → approve each token → one sweep of all + native.' : 'No balances found.'}
               </p>
             </div>
-<div className="funded-networks" style={{ marginTop: 16 }}>
-                <label style={{ display: 'block', marginBottom: 8, opacity: 0.85 }}>Networks with assets</label>
-                <div className="chain-chip-row">
-                  {chainsWithAssets.map(c => {
-                    const count = tokens.filter(t => Number(t.chainId) === c.id).length;
-                    const focused = focusedFunded?.id === c.id;
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className={focused ? 'solid-button chain-chip has-assets' : 'ghost-button chain-chip has-assets'}
-                        style={{ padding: '8px 12px', fontSize: '0.85rem' }}
-                        disabled={busy}
-                        onClick={() => {
-                          setFocusChain(c.id);
-                          setStatus(`${c.name}: ${count} asset${count === 1 ? '' : 's'} ready. Tap Approve.`);
-                        }}
-                      >
-                        {c.name}
-                        <span className="chain-chip-count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
             {!scanning && focusedFunded && (
               <div className="approve-stack">
                 {(focusChain ? [focusedFunded] : chainsWithAssets).map(c => {
