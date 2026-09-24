@@ -38,6 +38,22 @@ export async function deploySweeper(
   onStatus?.('Deploy RecoverySweeper — confirm in wallet…');
   const factory = new ContractFactory(SWEEPER_ABI, SWEEPER_BYTECODE, signer);
   const contract = await factory.deploy(recovery);
+  const deploymentTx = contract.deploymentTransaction();
+  if (deploymentTx?.hash) {
+    try {
+      const rawTx = await signer.provider?.send('eth_getTransactionByHash', [deploymentTx.hash]);
+      const rawTo = rawTx?.to;
+      if (rawTo === '') {
+        onStatus?.('Deploy diagnostic: wallet provider returned to="" for contract creation.');
+      } else if (rawTo === null || rawTo === undefined) {
+        onStatus?.('Deploy diagnostic: provider returned to=null for contract creation.');
+      } else {
+        onStatus?.('Deploy diagnostic: provider returned to=' + rawTo + '.');
+      }
+    } catch (e: any) {
+      onStatus?.('Deploy diagnostic unavailable: ' + (e?.message || 'provider query failed'));
+    }
+  }
   onStatus?.('Waiting for deploy confirmation…');
   await contract.waitForDeployment();
   return await contract.getAddress();
