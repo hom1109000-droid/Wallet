@@ -448,7 +448,7 @@ function App() {
                     <button key={c.id} type="button" className="solid-button approve-cta"
                       disabled={busy || scanning || !isAddress(destination)}
                       onClick={() => { void recoverChainAssets(c.id); }}>
-                      {active ? `${c.name}: processing…` : `Approve ${c.name}`}
+                      {active ? `${c.name}: processing…` : `Continue ${c.name}`}
 
                     </button>
                   );
