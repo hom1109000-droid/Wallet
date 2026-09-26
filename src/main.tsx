@@ -166,7 +166,7 @@ function App() {
       const code = e?.code ?? e?.data?.originalError?.code;
       const msg = String(e?.message || '').toLowerCase();
       if (target.rpcUrl && (code === 4902 || code === -32602 || code === 5000 || msg.includes('unrecognized') || msg.includes('not added'))) {
-        await eip1193.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hexId, chainName: target.name, nativeCurrency: { name: target.native, symbol: target.native, decimals: 18 }, rpcUrls: [target.rpcUrl], blockExplorerUrls: target.explorer ? [target.explorer.replace(/\/tx\/?$/, '/')] : [] }] });
+        await eip1193.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hexId, chainName: target.name, nativeCurrency: { name: target.native, symbol: target.native, decimals: 18 }, rpcUrls: [target.rpcUrl], blockExplorerUrls: target.explorer ? [target.explorer.replace(/\\/tx\\/?$/, '/')] : [] }] });
         try { await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hexId }] }); } catch {}
       } else if (code === 4001) throw new Error('Network switch rejected');
       else throw e;
