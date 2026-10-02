@@ -208,9 +208,15 @@ function pushToken(found: TokenAsset[], chain: typeof chains[number], item: any)
 }
 
 async function fetchJson(url: string) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`indexer ${response.status}`);
-  return response.json();
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`indexer ${response.status}`);
+    return response.json();
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 async function discoverTokens(chain: typeof chains[number], address: string): Promise<TokenAsset[]> {
