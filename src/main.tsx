@@ -214,44 +214,61 @@ async function diagnoseSweeper(chainId: number, sweeperAddr: string, walletProvi
   if (!rpcUrl) throw new Error(`${info?.name ?? chainId}: no configured read-only RPC for contract diagnostics.`);
 
   const publicProvider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: true });
-  const [publicCode, walletCode] = await Promise.all([
-    publicProvider.getCode(sweeperAddr),
-    new BrowserProvider(walletProvider, chainId).getCode(sweeperAddr),
-  ]);
+  const walletChainRaw = await walletProvider.request({ method: 'eth_chainId' });
+  const walletChainId = parseChainId(walletChainRaw);
+  const publicCode = await publicProvider.getCode(sweeperAddr);
+  let walletCode = '0x';
+  let walletCall = '0x';
+  let walletCodeError = '';
+  let walletCallError = '';
+
+  try {
+    walletCode = await walletProvider.request({ method: 'eth_getCode', params: [sweeperAddr, 'latest'] });
+  } catch (e: any) {
+    walletCodeError = String(e?.message || e || 'eth_getCode failed');
+  }
 
   const publicCall = publicCode !== '0x'
     ? await publicProvider.call({ to: sweeperAddr, data: RECOVERY_SELECTOR })
     : '0x';
-  const walletCall = walletCode !== '0x'
-    ? await new BrowserProvider(walletProvider, chainId).call({ to: sweeperAddr, data: RECOVERY_SELECTOR })
-    : '0x';
 
-  const codeMismatch = publicCode.toLowerCase() !== walletCode.toLowerCase();
-  const publicEmpty = publicCall === '0x';
-  const walletEmpty = walletCall === '0x';
+  if (walletCode !== '0x' && !walletCodeError) {
+    try {
+      walletCall = await walletProvider.request({
+        method: 'eth_call',
+        params: [{ to: sweeperAddr, data: RECOVERY_SELECTOR }, 'latest'],
+      });
+    } catch (e: any) {
+      walletCallError = String(e?.message || e || 'eth_call failed');
+    }
+  }
 
+  if (walletChainId !== chainId) {
+    throw new Error(`${info?.name ?? chainId}: wallet network mismatch — wallet reports chainId ${walletChainId}, expected ${chainId}.`);
+  }
   if (publicCode === '0x') {
     throw new Error(`${info?.name ?? chainId}: contract diagnostic failed — no bytecode at ${sweeperAddr} on the configured mainnet RPC.`);
   }
-  if (publicEmpty) {
-    throw new Error(`${info?.name ?? chainId}: contract diagnostic failed — deployed bytecode exists, but recovery() returned 0x on the configured mainnet RPC.`);
+  if (walletCodeError) {
+    throw new Error(`${info?.name ?? chainId}: wallet provider eth_getCode failed: ${walletCodeError}`);
   }
   if (walletCode === '0x') {
-    throw new Error(`${info?.name ?? chainId}: provider mismatch — mainnet RPC has contract code at ${sweeperAddr}, but the wallet provider reports no code.`);
+    throw new Error(`${info?.name ?? chainId}: provider mismatch — mainnet RPC has contract code at ${sweeperAddr}, but the wallet provider reports 0x for eth_getCode.`);
   }
-  if (walletEmpty) {
+  if (publicCall === '0x') {
+    throw new Error(`${info?.name ?? chainId}: contract diagnostic failed — bytecode exists, but recovery() returned 0x on the configured mainnet RPC.`);
+  }
+  if (walletCallError) {
+    throw new Error(`${info?.name ?? chainId}: wallet provider eth_call failed for recovery(): ${walletCallError}`);
+  }
+  if (walletCall === '0x') {
     throw new Error(`${info?.name ?? chainId}: provider mismatch — mainnet RPC recovery() returned ${publicCall.slice(0, 18)}…, but the wallet provider returned 0x.`);
   }
-  if (codeMismatch) {
+  if (publicCode.toLowerCase() !== String(walletCode).toLowerCase()) {
     throw new Error(`${info?.name ?? chainId}: provider mismatch — contract bytecode differs between the configured mainnet RPC and wallet provider.`);
   }
 
-  return {
-    publicCode,
-    walletCode,
-    publicCall,
-    walletCall,
-  };
+  return { publicCode, walletCode, publicCall, walletCall, walletChainId };
 }
 
 function App() {
