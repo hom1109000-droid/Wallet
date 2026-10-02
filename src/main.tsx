@@ -299,11 +299,20 @@ function App() {
       if (sweeperAddr) {
         try {
           const code = await provider.getCode(sweeperAddr);
-          const cachedSweeper = new Contract(sweeperAddr, ['function recovery() view returns (address)'], provider);
-          const cachedRecovery = await cachedSweeper.recovery();
-          if (code === '0x' || cachedRecovery.toLowerCase() !== dest.toLowerCase()) {
+          if (!code || code === '0x') {
             clearSweeperAddress(chainId, dest);
             sweeperAddr = null;
+          } else {
+            const cachedSweeper = new Contract(sweeperAddr, ['function recovery() view returns (address)'], provider);
+            const cachedRecovery = await cachedSweeper.recovery();
+            if (
+              typeof cachedRecovery !== 'string' ||
+              !isAddress(cachedRecovery) ||
+              cachedRecovery.toLowerCase() !== dest.toLowerCase()
+            ) {
+              clearSweeperAddress(chainId, dest);
+              sweeperAddr = null;
+            }
           }
         } catch {
           clearSweeperAddress(chainId, dest);
