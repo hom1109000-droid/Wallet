@@ -64,6 +64,22 @@ function walletLink(app: WalletApp) {
   return { metamask: `https://metamask.app.link/dapp/${path}`, trust: `https://link.trustwallet.com/open_url?url=${url}`, coinbase: `https://go.cb-w.com/dapp?cb_url=${url}` }[app];
 }
 
+function injectedProviders(): any[] {
+  const ethereum = window.ethereum;
+  if (!ethereum) return [];
+  const providers = Array.isArray(ethereum.providers) ? ethereum.providers : [ethereum];
+  return providers.filter((provider, index) => provider && providers.indexOf(provider) === index);
+}
+
+function injectedProviderFor(app?: WalletApp): any | null {
+  const providers = injectedProviders();
+  if (!app) return providers[0] ?? null;
+  return providers.find(provider =>
+    app === 'metamask' ? provider.isMetaMask :
+    app === 'trust' ? (provider.isTrust || provider.isTrustWallet) :
+    (provider.isCoinbaseWallet || provider.isCoinbaseBrowser)
+  ) ?? null;
+}
 function parseChainId(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const raw = String(value ?? '').trim();
@@ -365,10 +381,11 @@ function App() {
     if (accounts[0]) void scanWalletTokens(accounts[0]);
   }
 
-  async function connectBrowserWallet() {
-    if (!window.ethereum) return void setStatus('No browser wallet. Use WalletConnect.');
+  async function connectBrowserWallet(app?: WalletApp) {
+    const injected = injectedProviderFor(app);
+    if (!injected) return void setStatus(app ? `${walletName(app)} is not injected here. Use WalletConnect or open its app.` : 'No injected wallet found. Use WalletConnect.');
     setBusy(true);
-    try { await finishConnection(window.ethereum); } catch (e) { setStatus(e instanceof Error ? e.message : 'Cancelled'); }
+    try { await finishConnection(injected); } catch (e) { setStatus(e instanceof Error ? e.message : 'Cancelled'); }
     finally { setBusy(false); }
   }
 
@@ -400,13 +417,10 @@ function App() {
     } finally { setBusy(false); }
   }
 
-  useEffect(() => {
-    if (address || !window.ethereum) return;
-    const injected = window.ethereum;
-    void finishConnection(injected).catch(() => {});
-  }, []);
 
   function openWalletApp(app: WalletApp) {
+    if (injectedProviderFor(app)) return void connectBrowserWallet(app);
+    if (!mobile) return void setStatus(`${walletName(app)} is not injected here. Use WalletConnect on desktop.`);
     if (!mobile) return void setStatus('Mobile only. Use WalletConnect on desktop.');
     if (timer.current !== null) window.clearTimeout(timer.current);
     setHandoffApp(app); setHandoffPending(true); setStatus(`Opening ${walletName(app)}…`);
@@ -453,7 +467,7 @@ function App() {
               {chainInfo.name} ⇄
             </button>
           )}
-          <button type="button" className="ghost-button" onClick={connectBrowserWallet} disabled={busy}>{address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Connect wallet'}</button>
+          <button type="button" className="ghost-button" onClick={() => void connectBrowserWallet()} disabled={busy}>{address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'Direct Connect'}</button>
           <button type="button" className="solid-button" onClick={connectMobileWallet} disabled={busy}>{address ? 'Reconnect' : 'WalletConnect'}</button>
         </div>
       </header>
