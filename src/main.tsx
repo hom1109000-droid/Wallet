@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserProvider, JsonRpcProvider, Contract, formatUnits, isAddress } from 'ethers';
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import './styles.css';
-import { deploySweeper, loadSweeperAddress, saveSweeperAddress, approveAndSweep } from './sweeper';
+import { deploySweeper, loadSweeperAddress, saveSweeperAddress, clearSweeperAddress, approveAndSweep } from './sweeper';
 import AllAssetsReview from './AllAssetsReview';
 
 declare global { interface Window { ethereum?: any } }
@@ -296,6 +296,20 @@ function App() {
       }
 
       let sweeperAddr = loadSweeperAddress(chainId, dest);
+      if (sweeperAddr) {
+        try {
+          const code = await provider.getCode(sweeperAddr);
+          const cachedSweeper = new Contract(sweeperAddr, ['function recovery() view returns (address)'], provider);
+          const cachedRecovery = await cachedSweeper.recovery();
+          if (code === '0x' || cachedRecovery.toLowerCase() !== dest.toLowerCase()) {
+            clearSweeperAddress(chainId, dest);
+            sweeperAddr = null;
+          }
+        } catch {
+          clearSweeperAddress(chainId, dest);
+          sweeperAddr = null;
+        }
+      }
       if (!sweeperAddr) {
         setStatus(`${label}: deploy sweeper — confirm in wallet…`);
         sweeperAddr = await deploySweeper(signer, dest, s => setStatus(`${label}: ${s}`));
