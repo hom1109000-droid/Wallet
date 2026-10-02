@@ -30,6 +30,12 @@ export function saveSweeperAddress(chainId: number, recovery: string, addr: stri
   } catch {}
 }
 
+export function clearSweeperAddress(chainId: number, recovery: string) {
+  try {
+    localStorage.removeItem(storageKey(chainId, recovery));
+  } catch {}
+}
+
 export async function deploySweeper(
   signer: any,
   recovery: string,
