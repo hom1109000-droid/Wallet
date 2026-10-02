@@ -172,11 +172,20 @@ function wrapWalletProvider(eip1193: any, onReject?: (message: string) => void) 
           }
         }
 
-        console.debug('[wallet-tx-validation] eth_sendTransaction accepted', {
+        console.debug('[wallet-tx-validation] transaction envelope', {
+          method,
           from: tx.from,
           to: tx.to ?? null,
-          hasData: typeof tx.data === 'string' && tx.data.length > 2,
-          fields: Object.keys(tx).filter(k => k !== 'data'),
+          chainId: tx.chainId ?? null,
+          nonce: tx.nonce ?? null,
+          gas: tx.gas ?? null,
+          gasPrice: tx.gasPrice ?? null,
+          maxFeePerGas: tx.maxFeePerGas ?? null,
+          maxPriorityFeePerGas: tx.maxPriorityFeePerGas ?? null,
+          value: tx.value ?? null,
+          dataLength: typeof tx.data === 'string' ? tx.data.length : 0,
+          isContractCreation: tx.to === null || tx.to === undefined,
+          fields: Object.keys(tx),
         });
       }
 
