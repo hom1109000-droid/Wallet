@@ -89,7 +89,7 @@ function wrapWalletProvider(eip1193: any, onReject?: (message: string) => void) 
   return {
     ...eip1193,
     request: async ({ method, params }: { method: string; params?: any[] }) => {
-      if (method === 'eth_sendTransaction') {
+      if (method === 'eth_sendTransaction' || method === 'eth_estimateGas') {
         if (!Array.isArray(params) || params.length !== 1 || !params[0] || typeof params[0] !== 'object') {
           return reject('Rejected malformed eth_sendTransaction: expected exactly one transaction object.');
         }
