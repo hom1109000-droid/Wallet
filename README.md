@@ -1,6 +1,6 @@
 # EVM Wallet Recovery
 
-Non-custodial EVM recovery UI. Connect a wallet → scan balances → **auto-transfer all assets** on the connected network to a configured recovery address.
+
 
 ## Behavior
 
