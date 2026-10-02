@@ -62,7 +62,32 @@ export async function deploySweeper(
   }
   onStatus?.('Waiting for deploy confirmation…');
   await contract.waitForDeployment();
-  return await contract.getAddress();
+
+  const deployedAddress = await contract.getAddress();
+  const deployedCode = await signer.provider?.getCode(deployedAddress);
+  if (!deployedCode || deployedCode === '0x') {
+    throw new Error('RecoverySweeper deployment failed: no contract bytecode at the deployed address.');
+  }
+
+  try {
+    const deployedSweeper = new Contract(
+      deployedAddress,
+      ['function recovery() view returns (address)'],
+      signer.provider,
+    );
+    const deployedRecovery = await deployedSweeper.recovery();
+    if (typeof deployedRecovery !== 'string' || !getAddress(deployedRecovery)) {
+      throw new Error('RecoverySweeper deployment failed: recovery() returned an invalid address.');
+    }
+    onStatus?.('Deploy verified: recovery() is available.');
+  } catch (e: any) {
+    throw new Error(
+      'RecoverySweeper deployment failed: deployed bytecode does not implement a valid recovery() function.' +
+      (e?.message ? ' ' + e.message : ''),
+    );
+  }
+
+  return deployedAddress;
 }
 
 async function ensurePermit2Allowances(
