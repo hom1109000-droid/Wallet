@@ -249,9 +249,11 @@ async function discoverNativeAsset(chain: typeof chains[number], address: string
   for (const rpcUrl of rpcUrls) {
     try {
       const provider = new JsonRpcProvider(rpcUrl, chain.id, { staticNetwork: true });
-      const rpcChainId = Number(await provider.send('eth_chainId', []));
+      const timeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('RPC timeout')), 8000));
+      const rpcChainId = Number(await Promise.race([provider.send('eth_chainId', []), timeout]));
       if (rpcChainId !== chain.id) throw new Error('RPC chainId mismatch: expected ' + chain.id + ', got ' + rpcChainId);
-      const rawBalance = await provider.getBalance(address);
+      const balanceTimeout = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('RPC balance timeout')), 8000));
+      const rawBalance = await Promise.race([provider.getBalance(address), balanceTimeout]);
       if (rawBalance <= 0n) return null;
       return { chainId: chain.id, chainName: chain.name, address: 'native', name: chain.native, symbol: chain.native, decimals: 18, balance: formatUnits(rawBalance, 18), kind: 'native' };
     } catch (e) {
