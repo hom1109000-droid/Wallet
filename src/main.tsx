@@ -71,6 +71,67 @@ function parseChainId(value: unknown): number {
   return Number(raw);
 }
 
+function wrapWalletProvider(eip1193: any, onReject?: (message: string) => void) {
+  if (!eip1193 || typeof eip1193.request !== 'function') return eip1193;
+
+  const reject = (message: string): never => {
+    console.error('[wallet-tx-validation]', message);
+    onReject?.(message);
+    throw new Error(message);
+  };
+
+  const isHexQuantity = (value: unknown) =>
+    typeof value === 'string' && /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value);
+
+  const isHexData = (value: unknown) =>
+    typeof value === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/.test(value);
+
+  return {
+    ...eip1193,
+    request: async ({ method, params }: { method: string; params?: any[] }) => {
+      if (method === 'eth_sendTransaction') {
+        if (!Array.isArray(params) || params.length !== 1 || !params[0] || typeof params[0] !== 'object') {
+          return reject('Rejected malformed eth_sendTransaction: expected exactly one transaction object.');
+        }
+
+        const tx = params[0];
+
+        if (typeof tx.from !== 'string' || !isAddress(tx.from)) {
+          return reject('Rejected malformed eth_sendTransaction: invalid or missing from address.');
+        }
+
+        if (Object.prototype.hasOwnProperty.call(tx, 'to')) {
+          if (tx.to === '') {
+            return reject('Rejected malformed eth_sendTransaction: to cannot be an empty string.');
+          }
+          if (tx.to !== null && (typeof tx.to !== 'string' || !isAddress(tx.to))) {
+            return reject('Rejected malformed eth_sendTransaction: invalid to address.');
+          }
+        }
+
+        if (tx.data !== undefined && !isHexData(tx.data)) {
+          return reject('Rejected malformed eth_sendTransaction: data must be 0x-prefixed byte data.');
+        }
+
+        for (const field of ['value', 'gas', 'gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas', 'nonce', 'chainId']) {
+          if (tx[field] !== undefined && !isHexQuantity(tx[field])) {
+            return reject(`Rejected malformed eth_sendTransaction: ${field} must be a hex quantity.`);
+          }
+        }
+
+        console.debug('[wallet-tx-validation] eth_sendTransaction accepted', {
+          from: tx.from,
+          to: tx.to ?? null,
+          hasData: typeof tx.data === 'string' && tx.data.length > 2,
+          fields: Object.keys(tx).filter(k => k !== 'data'),
+        });
+      }
+
+      return eip1193.request({ method, params });
+    },
+  };
+}
+
 function pushToken(found: TokenAsset[], chain: typeof chains[number], item: any) {
   const token = item?.token ?? item;
   const value = item?.value ?? item?.balance ?? token?.value;
@@ -208,7 +269,8 @@ function App() {
         setConnectedChain(chainId);
       }
 
-      const provider = new BrowserProvider(eip1193, chainId);
+      const validatedEip1193 = wrapWalletProvider(eip1193, message => setStatus(`${label}: ${message}`));
+      const provider = new BrowserProvider(validatedEip1193, chainId);
       const signer = await provider.getSigner();
       const sender = await signer.getAddress();
       if (sender.toLowerCase() !== address.toLowerCase()) {
